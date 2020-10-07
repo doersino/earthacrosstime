@@ -107,7 +107,7 @@ class MercatorProjection:
             )
         return Point(x, y)
 
-    def point_to_latlon(self, point):
+    def point_to_geopoint(self, point):
         lon = self.__interpolate(point.x, 0, self.width, self.west, self.east);
         lat = self.__raw_unproject_lat(self.__interpolate(
             point.y,
@@ -120,8 +120,55 @@ class MercatorProjection:
 
 class GeoPoint:
     def __init__(self, lat, lon):
+        assert -90 <= lat <= 90 and -180 <= lon <= 180
+
         self.lat = lat
         self.lon = lon
+
+    def __repr__(self):
+        return f"GeoPoint({self.lat}, {self.lon})"
+
+    def fancy(self):
+        """Stringifies the point in a more fancy way than __repr__, e.g.
+        "44°35'27.6"N 100°21'53.1"W", i.e. with minutes and seconds."""
+
+        # helper function as both latitude and longitude are stringified
+        # basically the same way
+        def fancy_coord(coord, pos, neg):
+            coord_dir = pos if coord > 0 else neg
+            coord_tmp = abs(coord)
+            coord_deg = math.floor(coord_tmp)
+            coord_tmp = (coord_tmp - math.floor(coord_tmp)) * 60
+            coord_min = math.floor(coord_tmp)
+            coord_sec = round((coord_tmp - math.floor(coord_tmp)) * 600) / 10
+            coord = f"{coord_deg}°{coord_min}'{coord_sec}\"{coord_dir}"
+            return coord
+
+        lat = fancy_coord(self.lat, "N", "S")
+        lon = fancy_coord(self.lon, "E", "W")
+
+        return f"{lat} {lon}"
+
+    # TODO correct? M.video_height or width?
+    # TODO https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/scaleBar.js#L457
+    def determine_level(self, max_meters_per_pixel):
+        earth_circumference = 40075.016686 * 1000  # in meters, at the equator
+
+        # TODO nor sure where 1.5 comes from, it's also not quite accurate, figure out!
+        meters_per_pixel_at_level_0 = 1.5 * (earth_circumference / M.video_height) * math.cos(math.radians(self.lat))
+
+        for level in reversed(range(M.nlevels)):
+            meters_per_pixel = meters_per_pixel_at_level_0 / (2 ** level)
+
+            if meters_per_pixel > max_meters_per_pixel:
+                return ZoomLevel(level, meters_per_pixel)
+
+        return ZoomLevel(0, meters_per_pixel_at_level_0)
+
+class ZoomLevel:
+    def __init__(self, level, meters_per_pixel):
+        self.level = level
+        self.meters_per_pixel = meters_per_pixel
 
 # rel to width, height
 class Point:
@@ -129,40 +176,21 @@ class Point:
         self.x = x
         self.y = y
 
-"""
-def ZoomLevel:
-    def __init__(self, level, meters_per_pixel):
-        pass  # TODO use for a x b km overlay
-"""
-
 class TileProjection:
     def __init__(self):
         pass
 
-    # TODO attribtute: based on aerialbot
-    def determine_level(self, geopoint, max_meters_per_pixel):
-        earth_circumference = 40075.016686 * 1000  # in meters, at the equator
-        meters_per_pixel_at_level_0 = (earth_circumference / M.video_height) * math.cos(math.radians(geopoint.lat))
-
-        for level in reversed(range(M.nlevels)):
-            meters_per_pixel = meters_per_pixel_at_level_0 / (2 ** level)
-
-            if meters_per_pixel > max_meters_per_pixel:
-                return level  # TODO +1? nah?
-
-        return 0
-
     # TODO attribtute: based on ...
     def point_and_level_to_tile(self, point, level):
-        level_scale = math.pow(2, M.nlevels - 1 - level)
+        level_scale = math.pow(2, M.nlevels - 1 - level.level)
 
         col = round((point.x - (M.video_width * level_scale * 0.5)) / (M.tile_width * level_scale))
         col = max(col, 0)
-        col = min(col, M.level_info[level]['cols'] - 1)
+        col = min(col, M.level_info[level.level]['cols'] - 1)
 
         row = round((point.y - (M.video_height * level_scale * 0.5)) / (M.tile_height * level_scale))
         row = max(row, 0)
-        row = min(row, M.level_info[level]['rows'] - 1)
+        row = min(row, M.level_info[level.level]['rows'] - 1)
 
         return Tile(level, col, row)
 
@@ -175,7 +203,7 @@ class Tile:
 class TimelapseVideo:
     def __init__(self, tile):
         self.tile = tile
-        base_filename = f"earthacrosstime-{tile.level}-{tile.row}-{tile.col}"
+        base_filename = f"earthacrosstime-{tile.level.level}-{tile.row}-{tile.col}"
         self.raw = os.path.join(C.temp_dir, base_filename + "-raw.mp4")
         self.raw_frames = os.path.join(C.temp_dir, base_filename + "-raw-frame%03d.png")
         self.processed = os.path.join(C.temp_dir, base_filename + "-processed.mp4")
@@ -187,7 +215,7 @@ class TimelapseVideo:
             f.write(video_data)
 
     def download(self):
-        url = f"{M.timemachine_repository_url}{M.dataset}/{self.tile.level}/{self.tile.row}/{self.tile.col}.mp4"
+        url = f"{M.timemachine_repository_url}{M.dataset}/{self.tile.level.level}/{self.tile.row}/{self.tile.col}.mp4"
 
         r = requests.get(url)
         if r.status_code != 200:
@@ -214,23 +242,20 @@ class TimelapseVideo:
 
         return np.array(txt)
 
-    def __draw_progress_bar(self, width, height, completion):
-        bar = Image.new("RGBA", (width,height), (255,255,255,0))
-        d = ImageDraw.Draw(bar)
-        d.rectangle([0,0,int(width * completion),height], fill=(255,255,255,255))
-        return np.array(bar)
-
     def __draw_progress_pieslice(self, size, completion):
-        # pieslice doesn't antialias, so work around that by drawing at 2x scale and then scaling down
-        size = 3 * size
+
+        # pieslice doesn't antialias, so work around that by drawing at 3x scale and then scaling down
+        factor = 3
+
+        size = factor * size
         pie = Image.new("RGBA", (size,size), (255,255,255,0))
         d = ImageDraw.Draw(pie)
         d.pieslice([0,0,size-1,size-1], 0, 360, fill=(255,255,255,128))
         d.pieslice([0,0,size-1,size-1], -90, completion * 360 - 90, fill=(255,255,255,255))
-        pie = pie.resize((int(size / 3), int(size / 3)))
+        pie = pie.resize((int(size / factor), int(size / factor)))
         return np.array(pie)
 
-    def process(self):
+    def process(self, point):
         clip = VideoFileClip(self.raw)
         assert clip.w == M.video_width
         assert clip.h == M.video_height
@@ -244,24 +269,24 @@ class TimelapseVideo:
         for n, frame in enumerate(clip.iter_frames()):
             print("processing frame " + str(n+1))
             clip = ImageClip(frame)
-            # TODO can do everything except year afterwards since it's the same for each img
-            geopoint = ImageClip(self.__draw_text("34°57'15.0\"N 128°18'23.8\"E", int(M.video_height / 15)))  # TODO actual text
+
+            pieslice_height = int(M.video_height / 13.5)  # manually dialled in to match font appearance
+            pieslice = ImageClip(self.__draw_progress_pieslice(pieslice_height, n / (M.frames - 1)))
+            pieslice = pieslice.set_position((clip.size[0] - pieslice.size[0] - margin, margin))
+            year = ImageClip(self.__draw_text(M.capture_times[n], int(M.video_height / 7)))
+            year = year.set_position((clip.size[0] - year.size[0] - pieslice.size[0] - margin - margin, margin))
+
+            # all of the following could be done outside the loop, which seems like it would be faster, but it's way slower
+            geopoint = ImageClip(self.__draw_text(point.fancy(), int(M.video_height / 15)))  # TODO actual text
             geopoint = geopoint.set_position((margin, margin))
-            area = ImageClip(self.__draw_text("6.25 x 3.8 km", int(M.video_height / 22)))  # TODO actual text
+            area_w = round(self.tile.level.meters_per_pixel * M.video_width / 1000, 2)
+            area_h = round(self.tile.level.meters_per_pixel * M.video_height / 1000, 2)
+            area = ImageClip(self.__draw_text(f"{area_w} x {area_h} km", int(M.video_height / 22)))  # TODO actual text
             area = area.set_position((margin, margin + geopoint.size[1] + int(area.size[1] / 2)))
-            year = ImageClip(self.__draw_text(M.capture_times[n], int(M.video_height / 8)))
-            year = year.set_position((clip.size[0] - year.size[0] - margin, margin))
             source = ImageClip(self.__draw_text("Source: Google Earth Timelapse (Google, Landsat, Copernicus)", int(M.video_height / 40)))
             source = source.set_position((clip.size[0] - source.size[0] - margin, clip.size[1] - source.size[1] - margin))
-            bar_height = int(M.video_height / 70)
-            bar = ImageClip(self.__draw_progress_bar(M.video_width, bar_height, n / (M.frames - 1)))
-            bar = bar.set_position((0, clip.size[1] - bar_height))
 
-            pieslice_height = int(M.video_height / 10)
-            pieslice = ImageClip(self.__draw_progress_pieslice(pieslice_height, n / (M.frames - 1)))
-            pieslice = pieslice.set_position((200,200))
-
-            clip = CompositeVideoClip([clip, geopoint, area, year, source, bar, pieslice])
+            clip = CompositeVideoClip([clip, pieslice, year, geopoint, area, source])
             frames.append(clip)
 
         # concatenate
@@ -299,17 +324,17 @@ def main():
     M = MetadataFetcher(C.timemachine_repository_url).fetch()
 
     geopoint = GeoPoint(48.511865, 9.063931)
-    max_meters_per_pixel = 10
+    max_meters_per_pixel = 100000000000
 
     proj = MercatorProjection(M.projection_bounds, M.width, M.height)
     point = proj.geopoint_to_point(geopoint)
+    level = geopoint.determine_level(max_meters_per_pixel)
     tileproj = TileProjection()
-    level = tileproj.determine_level(geopoint, max_meters_per_pixel)
     tile = tileproj.point_and_level_to_tile(point, level)
     print(tile.__dict__)
     timelapse = TimelapseVideo(tile)
     timelapse.download()
-    timelapse.process()
+    timelapse.process(geopoint)
     print(timelapse.processed)
 
 if __name__ == "__main__":
