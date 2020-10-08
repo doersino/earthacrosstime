@@ -264,9 +264,13 @@ class TimelapseVideo:
         assert clip.fps == M.fps
         assert clip.duration == M.frames / M.fps
 
+        result_framerate = 24
+        images_per_second = 3
         margin = int(M.video_height / 30)
-        final_frame_persist = 0.5
+        final_frame_persist = 1
         endcard_crossfade = 0.5
+
+        #fast_clip = concatenate_videoclips([ImageClip(frame).set_duration(2 / result_framerate) for frame in clip.iter_frames()])
 
         # process each frame separately
         frames = []
@@ -287,7 +291,7 @@ class TimelapseVideo:
             area_w = round(self.tile.level.meters_per_pixel * M.video_width / 1000, 2)
             area_h = round(self.tile.level.meters_per_pixel * M.video_height / 1000, 2)
             area = ImageClip(self.__draw_text(f"{area_w} x {area_h} km", int(M.video_height / 22)))
-            area = area.set_position((margin, margin + geopoint.size[1] + int(area.size[1] / 2)))
+            area = area.set_position((margin, margin + geopoint.size[1] + int(0.67 * area.size[1])))
             source = ImageClip(self.__draw_text("Source: Google Earth Timelapse (Google, Landsat, Copernicus)", int(M.video_height / 40)))
             source = source.set_position((clip.size[0] - source.size[0] - margin, clip.size[1] - source.size[1] - margin))
 
@@ -295,7 +299,6 @@ class TimelapseVideo:
             frames.append(clip)
 
         # concatenate
-        images_per_second = 2
         clips = [clip.set_duration(1 / images_per_second) for clip in frames]
         final_clip = clips[-1]
         clips[-1] = clips[-1].set_duration(1 / images_per_second + final_frame_persist)
@@ -304,39 +307,39 @@ class TimelapseVideo:
         # add end card
         # https://commons.wikimedia.org/wiki/File:World_location_map_mono.svg
         # https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/World_location_map_mono.svg/3840px-World_location_map_mono.svg.png
-        background = ColorClip(clip.size, color=(0,0,0))
+        background = ColorClip(clip.size, color=(62,62,62))
         worldmap = ImageClip("map.png")
         map_scale = background.size[0] / worldmap.size[0]
         worldmap = worldmap.resize((background.size[0], map_scale * worldmap.size[1]))
         pointer = ImageClip("pointer.png").resize(map_scale)
         pointer_x = worldmap.size[0]/2 * (1 + (point.lon / 180)) - pointer.size[0]/2
         pointer_y = worldmap.size[1]/2 * (1 - (point.lat / 90)) - pointer.size[1]/2 # "-" since x increased from top while lat increases from bottom
-        # 960-(34.491462 / 90)*960
-        # 1920+(126.577785 / 180)*1920
-        # TODO hmm, more distinct? blinking?
         pointer = ImageClip("pointer.png").resize(map_scale).set_position((pointer_x,pointer_y))
-        worldmap = CompositeVideoClip([worldmap, pointer]).set_position((0,"bottom"))
+        geopoint = ImageClip(self.__draw_text(point.fancy(), int(1.3 * pointer.size[1])))
+        geopoint_x = None
+        geopoint_y = pointer_y + (pointer.size[1] - geopoint.size[1]) / 2
+        if point.lon < 0:
+            geopoint_x = pointer_x + 1.5 * pointer.size[0]
+        else:
+            geopoint_x = pointer_x - geopoint.size[0] - 0.5 * pointer.size[0]
+        geopoint = geopoint.set_position((geopoint_x, geopoint_y))
 
+        # TODO refine this
+        url = f"{M.timemachine_repository_url}{M.dataset}/{self.tile.level.level}/{self.tile.row}/{self.tile.col}.mp4"
+        credit_small_line2 = ImageClip(self.__draw_text(url, int(M.video_height / 40)))
+        credit_small_line2 = credit_small_line2.set_position((clip.size[0]/2 - credit_small_line2.size[0]/2, clip.size[1] - credit_small_line2.size[1] - margin))
+        credit_small_line1 = ImageClip(self.__draw_text("twitter.com/earthacrosstime • bot source code: github.com/doersino/earthacrosstime • typeface: optician sans", int(M.video_height / 40)))
+        credit_small_line1 = credit_small_line1.set_position((clip.size[0]/2 - credit_small_line1.size[0]/2, clip.size[1] - credit_small_line1.size[1] - credit_small_line2.size[1] * 1.5 - margin))
+        credit = ImageClip(self.__draw_text("@earthacrosstime", int(M.video_height / 22)))
+        credit = credit.set_position((clip.size[0]/2 - credit.size[0]/2, clip.size[1] - credit.size[1] - credit_small_line1.size[1] * 1.5 - credit_small_line2.size[1] * 2 - margin))
 
-        # TODO dedup with above, maybe just overlay that over whole clip?
-        geopoint = ImageClip(self.__draw_text(point.fancy(), int(M.video_height / 15)))
-        geopoint = geopoint.set_position((margin, margin))
-        area_w = round(self.tile.level.meters_per_pixel * M.video_width / 1000, 2)
-        area_h = round(self.tile.level.meters_per_pixel * M.video_height / 1000, 2)
-        area = ImageClip(self.__draw_text(f"{area_w} x {area_h} km", int(M.video_height / 22)))
-        area = area.set_position((margin, margin + geopoint.size[1] + int(area.size[1] / 2)))
-
-        # TODO do this differently
-        credit = ImageClip(self.__draw_text("@earthacrosstime", int(M.video_height / 15)))
-        credit = credit.set_position((clip.size[0] - credit.size[0] - margin, margin))
-
-        endcard = CompositeVideoClip([background, worldmap, geopoint, area, credit])
-        endcard = endcard.set_duration(4 + endcard_crossfade)
-        endcard = CompositeVideoClip([final_clip.set_duration(endcard_crossfade), endcard.crossfadein(endcard_crossfade)])
+        endcard = CompositeVideoClip([background, worldmap, pointer, geopoint, credit, credit_small_line1, credit_small_line2])
+        endcard_fade = CompositeVideoClip([final_clip.set_duration(endcard_crossfade), endcard.set_duration(endcard_crossfade).crossfadein(endcard_crossfade)])
+        endcard = endcard.set_duration(4)
 
         # finish!
-        clip = concatenate_videoclips([clip, endcard])
-        clip = clip.set_fps(24)
+        clip = concatenate_videoclips([clip, endcard_fade, endcard])
+        clip = clip.set_fps(result_framerate)
         clip.write_videofile(self.processed)  # logger=None
 
         #clip = clip.fx(vfx.speedx, 1 / M.fps * 2)
@@ -367,7 +370,13 @@ def main():
 
     #geopoint = GeoPoint(48.511865, 9.063931)
     #geopoint = GeoPoint(48.689085, 9.214927)
-    geopoint = GeoPoint(37.451517, 126.449402)
+    #geopoint = GeoPoint(37.451517, 126.449402)
+    #geopoint = GeoPoint(-5.668302, -53.627380)
+    #geopoint = GeoPoint(31.456186, -108.180147)
+    #geopoint = GeoPoint(33.405230, -116.041104)
+    #geopoint = GeoPoint(37.334742, -122.008965)
+    #geopoint = GeoPoint(10.923303, 114.082738)
+    geopoint = GeoPoint(-33.356552, -67.528900)
     max_meters_per_pixel = 20
 
     proj = MercatorProjection(M.projection_bounds, M.width, M.height)
