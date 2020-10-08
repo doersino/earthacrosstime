@@ -149,21 +149,23 @@ class GeoPoint:
 
         return f"{lat} {lon}"
 
-    # TODO correct? M.video_height or width?
-    # TODO https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/scaleBar.js#L457
-    def determine_level(self, max_meters_per_pixel):
-        earth_circumference = 40075.016686 * 1000  # in meters, at the equator
-
-        # TODO nor sure where 1.5 comes from, it's also not quite accurate, figure out!
-        meters_per_pixel_at_level_0 = 1.5 * (earth_circumference / M.video_height) * math.cos(math.radians(self.lat))
+    # TODO based on https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/scaleBar.js#L457
+    # TODO cleanup
+    def determine_level(self, proj, max_meters_per_pixel):
+        radian_per_degree = math.pi / 180
+        earth_radius = 6371  # in kilometers
+        c1 = radian_per_degree * earth_radius
 
         for level in reversed(range(M.nlevels)):
-            meters_per_pixel = meters_per_pixel_at_level_0 / (2 ** level)
+            point = proj.geopoint_to_point(self)
+            scale = 2 ** (level - (M.nlevels - 1))
+            one_pixel_off = proj.point_to_geopoint(Point((point.x + 1 / scale), point.y))
+            degrees_per_pixel = abs(self.lon - one_pixel_off.lon)
+            v1 = degrees_per_pixel * math.cos(self.lat * radian_per_degree)
+            meters_per_pixel = c1 * v1 * 1000
 
-            if meters_per_pixel > max_meters_per_pixel:
+            if meters_per_pixel > max_meters_per_pixel or level == 0:
                 return ZoomLevel(level, meters_per_pixel)
-
-        return ZoomLevel(0, meters_per_pixel_at_level_0)
 
 class ZoomLevel:
     def __init__(self, level, meters_per_pixel):
@@ -263,6 +265,8 @@ class TimelapseVideo:
         assert clip.duration == M.frames / M.fps
 
         margin = int(M.video_height / 30)
+        final_frame_persist = 0.5
+        endcard_crossfade = 0.5
 
         # process each frame separately
         frames = []
@@ -277,11 +281,12 @@ class TimelapseVideo:
             year = year.set_position((clip.size[0] - year.size[0] - pieslice.size[0] - margin - margin, margin))
 
             # all of the following could be done outside the loop, which seems like it would be faster, but it's way slower
-            geopoint = ImageClip(self.__draw_text(point.fancy(), int(M.video_height / 15)))  # TODO actual text
+            # TODO still, define them outside?
+            geopoint = ImageClip(self.__draw_text(point.fancy(), int(M.video_height / 15)))
             geopoint = geopoint.set_position((margin, margin))
             area_w = round(self.tile.level.meters_per_pixel * M.video_width / 1000, 2)
             area_h = round(self.tile.level.meters_per_pixel * M.video_height / 1000, 2)
-            area = ImageClip(self.__draw_text(f"{area_w} x {area_h} km", int(M.video_height / 22)))  # TODO actual text
+            area = ImageClip(self.__draw_text(f"{area_w} x {area_h} km", int(M.video_height / 22)))
             area = area.set_position((margin, margin + geopoint.size[1] + int(area.size[1] / 2)))
             source = ImageClip(self.__draw_text("Source: Google Earth Timelapse (Google, Landsat, Copernicus)", int(M.video_height / 40)))
             source = source.set_position((clip.size[0] - source.size[0] - margin, clip.size[1] - source.size[1] - margin))
@@ -291,11 +296,48 @@ class TimelapseVideo:
 
         # concatenate
         images_per_second = 2
-        clip = concatenate_videoclips([clip.set_duration(1 / images_per_second) for clip in frames])
+        clips = [clip.set_duration(1 / images_per_second) for clip in frames]
+        final_clip = clips[-1]
+        clips[-1] = clips[-1].set_duration(1 / images_per_second + final_frame_persist)
+        clip = concatenate_videoclips(clips)
 
         # add end card
+        # https://commons.wikimedia.org/wiki/File:World_location_map_mono.svg
+        # https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/World_location_map_mono.svg/3840px-World_location_map_mono.svg.png
+        background = ColorClip(clip.size, color=(0,0,0))
+        worldmap = ImageClip("map.png")
+        map_scale = background.size[0] / worldmap.size[0]
+        worldmap = worldmap.resize((background.size[0], map_scale * worldmap.size[1]))
+        pointer = ImageClip("pointer.png").resize(map_scale)
+        pointer_x = worldmap.size[0]/2 * (1 + (point.lon / 180)) - pointer.size[0]/2
+        pointer_y = worldmap.size[1]/2 * (1 - (point.lat / 90)) - pointer.size[1]/2 # "-" since x increased from top while lat increases from bottom
+        # 960-(34.491462 / 90)*960
+        # 1920+(126.577785 / 180)*1920
+        # TODO hmm, more distinct? blinking?
+        pointer = ImageClip("pointer.png").resize(map_scale).set_position((pointer_x,pointer_y))
+        worldmap = CompositeVideoClip([worldmap, pointer]).set_position((0,"bottom"))
+
+
+        # TODO dedup with above, maybe just overlay that over whole clip?
+        geopoint = ImageClip(self.__draw_text(point.fancy(), int(M.video_height / 15)))
+        geopoint = geopoint.set_position((margin, margin))
+        area_w = round(self.tile.level.meters_per_pixel * M.video_width / 1000, 2)
+        area_h = round(self.tile.level.meters_per_pixel * M.video_height / 1000, 2)
+        area = ImageClip(self.__draw_text(f"{area_w} x {area_h} km", int(M.video_height / 22)))
+        area = area.set_position((margin, margin + geopoint.size[1] + int(area.size[1] / 2)))
+
+        # TODO do this differently
+        credit = ImageClip(self.__draw_text("@earthacrosstime", int(M.video_height / 15)))
+        credit = credit.set_position((clip.size[0] - credit.size[0] - margin, margin))
+
+        endcard = CompositeVideoClip([background, worldmap, geopoint, area, credit])
+        endcard = endcard.set_duration(4 + endcard_crossfade)
+        endcard = CompositeVideoClip([final_clip.set_duration(endcard_crossfade), endcard.crossfadein(endcard_crossfade)])
+
+        # finish!
+        clip = concatenate_videoclips([clip, endcard])
         clip = clip.set_fps(24)
-        clip.write_videofile(self.processed)
+        clip.write_videofile(self.processed)  # logger=None
 
         #clip = clip.fx(vfx.speedx, 1 / M.fps * 2)
         #clip.write_images_sequence(self.raw_frames)
@@ -323,12 +365,14 @@ def main():
 
     M = MetadataFetcher(C.timemachine_repository_url).fetch()
 
-    geopoint = GeoPoint(48.511865, 9.063931)
-    max_meters_per_pixel = 100000000000
+    #geopoint = GeoPoint(48.511865, 9.063931)
+    #geopoint = GeoPoint(48.689085, 9.214927)
+    geopoint = GeoPoint(37.451517, 126.449402)
+    max_meters_per_pixel = 20
 
     proj = MercatorProjection(M.projection_bounds, M.width, M.height)
     point = proj.geopoint_to_point(geopoint)
-    level = geopoint.determine_level(max_meters_per_pixel)
+    level = geopoint.determine_level(proj, max_meters_per_pixel)
     tileproj = TileProjection()
     tile = tileproj.point_and_level_to_tile(point, level)
     print(tile.__dict__)
