@@ -9,7 +9,6 @@ from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
-C = None  # global for config
 M = None  # global for metadata
 
 class Config:
@@ -151,14 +150,14 @@ class GeoPoint:
 
     # TODO based on https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/scaleBar.js#L457
     # TODO cleanup
-    def determine_level(self, proj, max_meters_per_pixel):
+    def determine_level(self, nlevels, proj, max_meters_per_pixel):
         radian_per_degree = math.pi / 180
         earth_radius = 6371  # in kilometers
         c1 = radian_per_degree * earth_radius
 
-        for level in reversed(range(M.nlevels)):
-            point = proj.geopoint_to_point(self)
-            scale = 2 ** (level - (M.nlevels - 1))
+        point = proj.geopoint_to_point(self)
+        for level in reversed(range(nlevels)):
+            scale = 2 ** (level - (nlevels - 1))
             one_pixel_off = proj.point_to_geopoint(Point((point.x + 1 / scale), point.y))
             degrees_per_pixel = abs(self.lon - one_pixel_off.lon)
             v1 = degrees_per_pixel * math.cos(self.lat * radian_per_degree)
@@ -178,12 +177,16 @@ class Point:
         self.x = x
         self.y = y
 
-class TileProjection:
-    def __init__(self):
-        pass
+class Tile:
+    def __init__(self, level, col, row):
+        self.level = level
+        self.col = col
+        self.row = row
 
-    # TODO attribtute: based on ...
-    def point_and_level_to_tile(self, point, level):
+    # TODO attribute this snippet: based on ...
+    # TODO could move this as a init method into tile class, with static attributes for M.*
+    @classmethod
+    def from_point_and_level(cls, point, level):
         level_scale = math.pow(2, M.nlevels - 1 - level.level)
 
         col = round((point.x - (M.video_width * level_scale * 0.5)) / (M.tile_width * level_scale))
@@ -194,25 +197,21 @@ class TileProjection:
         row = max(row, 0)
         row = min(row, M.level_info[level.level]['rows'] - 1)
 
-        return Tile(level, col, row)
+        return cls(level, col, row)
 
-class Tile:
-    def __init__(self, level, col, row):
-        self.level = level
-        self.col = col
-        self.row = row
-
+# TODO split into timelapsevideo and videoprocessor/finishing/processing that would get a timelapsevideo and some metadata?
+# TODO assertions at top of process() could go into verify method?
 class TimelapseVideo:
-    def __init__(self, tile):
+    def __init__(self, tile, temp_dir):
         self.tile = tile
+        self.temp_dir = temp_dir
         base_filename = f"earthacrosstime-{tile.level.level}-{tile.row}-{tile.col}"
-        self.raw = os.path.join(C.temp_dir, base_filename + "-raw.mp4")
-        self.raw_frames = os.path.join(C.temp_dir, base_filename + "-raw-frame%03d.png")
-        self.processed = os.path.join(C.temp_dir, base_filename + "-processed.mp4")
+        self.raw = os.path.join(self.temp_dir, base_filename + "-raw.mp4")
+        self.processed = os.path.join(self.temp_dir, base_filename + "-processed.mp4")
 
     def __write_to_temp(self, video_data):
-        if not os.path.isdir(C.temp_dir):
-            os.makedirs(C.temp_dir)
+        if not os.path.isdir(self.temp_dir):
+            os.makedirs(self.temp_dir)
         with open(self.raw, 'wb') as f:
             f.write(video_data)
 
@@ -224,6 +223,13 @@ class TimelapseVideo:
             raise ValueError(f"Unable to download tile from {url}, status code {r.status_code}.")
 
         self.__write_to_temp(r.content)
+
+    def verify(self):
+        clip = VideoFileClip(self.raw)
+        assert clip.w == M.video_width
+        assert clip.h == M.video_height
+        assert clip.fps == M.fps
+        assert clip.duration == M.frames / M.fps
 
     def __draw_text(self, text, fontsize):
         fnt = ImageFont.truetype("Optician-Sans.otf", fontsize)  # TODO configurable
@@ -258,17 +264,13 @@ class TimelapseVideo:
         return np.array(pie)
 
     def process(self, point):
-        clip = VideoFileClip(self.raw)
-        assert clip.w == M.video_width
-        assert clip.h == M.video_height
-        assert clip.fps == M.fps
-        assert clip.duration == M.frames / M.fps
-
         result_framerate = 24
         images_per_second = 3
         margin = int(M.video_height / 30)
         final_frame_persist = 1
         endcard_crossfade = 0.5
+
+        clip = VideoFileClip(self.raw)
 
         #fast_clip = concatenate_videoclips([ImageClip(frame).set_duration(2 / result_framerate) for frame in clip.iter_frames()])
 
@@ -342,19 +344,9 @@ class TimelapseVideo:
         clip = clip.set_fps(result_framerate)
         clip.write_videofile(self.processed)  # logger=None
 
-        #clip = clip.fx(vfx.speedx, 1 / M.fps * 2)
-        #clip.write_images_sequence(self.raw_frames)
-
-    def process_frame(self, frame):
-        clip = ImageClip(frame)
-        clip2 = ImageClip("test.png")
-        clip = CompositeVideoClip([clip, clip2])
-
-        return clip.get_frame(0)
 
 
 def main():
-    global C
     global M
 
     # load configuration either from config.ini or from a user-supplied file
@@ -366,27 +358,21 @@ def main():
     config = ConfigObj(config_path, unrepr=True)
     C = Config(config)
 
+    # fetch metadata
     M = MetadataFetcher(C.timemachine_repository_url).fetch()
 
-    #geopoint = GeoPoint(48.511865, 9.063931)
-    #geopoint = GeoPoint(48.689085, 9.214927)
-    #geopoint = GeoPoint(37.451517, 126.449402)
-    #geopoint = GeoPoint(-5.668302, -53.627380)
-    #geopoint = GeoPoint(31.456186, -108.180147)
-    #geopoint = GeoPoint(33.405230, -116.041104)
-    #geopoint = GeoPoint(37.334742, -122.008965)
-    #geopoint = GeoPoint(10.923303, 114.082738)
-    geopoint = GeoPoint(-33.356552, -67.528900)
+    #geopoint = GeoPoint(46.469029, 76.040519)
+    geopoint = GeoPoint(48.781809, 9.180357)
     max_meters_per_pixel = 20
 
     proj = MercatorProjection(M.projection_bounds, M.width, M.height)
     point = proj.geopoint_to_point(geopoint)
-    level = geopoint.determine_level(proj, max_meters_per_pixel)
-    tileproj = TileProjection()
-    tile = tileproj.point_and_level_to_tile(point, level)
+    level = geopoint.determine_level(M.nlevels, proj, max_meters_per_pixel)
+    tile = Tile.from_point_and_level(point, level)
     print(tile.__dict__)
-    timelapse = TimelapseVideo(tile)
+    timelapse = TimelapseVideo(tile, C.temp_dir)
     timelapse.download()
+    timelapse.verify()
     timelapse.process(geopoint)
     print(timelapse.processed)
 
