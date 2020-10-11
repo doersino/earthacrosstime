@@ -19,9 +19,17 @@ from moviepy.editor import *
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
-import tweepy
+import twitter
 
 class Config:
+    """
+    Queen Daenerys Stormborn of the House Targaryen, the First of Her Name,
+    Queen of the Andals, the Rhoynar and the First Men, Lady of the Seven
+    Kingdoms and Protector of the Realm, Lady of Dragonstone, Queen of Meereen,
+    Khaleesi of the Great Grass Sea, the Unburnt, Breaker of Chains, Mother of
+    Dragons, Keeper of Configuration Variables.
+    """
+
     def __init__(self, config):
         self.verbosity = config['GENERAL']['verbosity']
         self.logfile = config['GENERAL']['logfile']
@@ -48,6 +56,8 @@ class Config:
         self.include_location_in_metadata = config['TWITTER']['include_location_in_metadata']
 
 class Metadata:
+    """The same but for metadata derived from tm.json and r.json."""
+
     def __init__(self, timemachine_repository_url, dataset, projection_bounds, capture_times, frames, fps, level_info, nlevels, width, height, tile_width, tile_height, video_width, video_height):
         self.timemachine_repository_url = timemachine_repository_url
         self.dataset = dataset
@@ -68,6 +78,11 @@ class Metadata:
         return f"Metadata({self.timemachine_repository_url}, {self.dataset}, {self.projection_bounds}, {self.capture_times}, {self.frames}, {self.fps}, {self.level_info}, {self.nlevels}, {self.width}, {self.height}, {self.tile_width}, {self.tile_height}, {self.video_width}, {self.video_height})"
 
 class MetadataFetcher:
+    """
+    Used to fetch and parse tm.json and r.json, yielding a Metadata object
+    containing only the relevant metadata.
+    """
+
     def __init__(self, timemachine_repository_url):
         self.timemachine_repository_url = timemachine_repository_url
 
@@ -85,6 +100,8 @@ class MetadataFetcher:
         return rjson
 
     def fetch(self):
+        """This function does all the "heavy" lifting."""
+
         tmjson = self.__fetch_tmjson()
         datasets = tmjson['datasets']
         assert len(datasets) == 1
@@ -113,6 +130,12 @@ class MetadataFetcher:
 
 # TODO attribute: based on ...
 class MercatorProjection:
+    """
+    The particular flavor of Web Mercator Projection used by Time Machine. Based
+    on the original JavaScript implementation found at:
+    https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/mercator.js
+    """
+
     def __init__(self, projection_bounds, width, height):
         self.west = projection_bounds['west']
         self.north = projection_bounds['north']
@@ -226,9 +249,14 @@ class GeoPoint:
 
         return shapely.geometry.Point(self.lon, self.lat)
 
-    # TODO based on https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/scaleBar.js#L457
-    # TODO cleanup, convert to radians with built-in functions
     def determine_level(self, proj, nlevels, max_meters_per_pixel):
+        """
+        Computes the outermost (i.e. lowest) zoom level that still fulfills the
+        constraint. Based on the original JavaScript implementation found at:
+        https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/scaleBar.js#L457
+        """
+
+        # TODO cleanup, convert to radians with built-in functions
         radian_per_degree = math.pi / 180
         earth_radius = 6371  # in kilometers
         c1 = radian_per_degree * earth_radius
@@ -246,8 +274,8 @@ class GeoPoint:
 
 class GeoRect:
     """
-    A rectangle between two points. The first point must be the southwestern
-    corner, the second point the northeastern corner:
+    A rectangle between two (geo)points. The first point must be the
+    southwestern corner, the second point the northeastern corner:
        +---+ ne
        |   |
     sw +---+
@@ -317,6 +345,12 @@ class GeoShape:
 
 # rel to width, height
 class PixPoint:
+    """
+    A point relative to the "width" and "height" attributes of r.json, i.e. the
+    total width and height of the world at the most detailed zoom level
+    available for the selected Time Machine repository.
+    """
+
     def __init__(self, x, y):
         self.x = x
         self.y = y
@@ -325,6 +359,8 @@ class PixPoint:
         return f"PixPoint({self.x}, {self.y})"
 
 class ZoomLevel:
+    """A zoom level."""
+
     def __init__(self, index, lat, meters_per_pixel):
         self.index = index
         self.lat = lat
@@ -334,9 +370,16 @@ class ZoomLevel:
         return f"ZoomLevel({self.index}, {self.lat}, {self.meters_per_pixel})"
 
     def kilometers(self, pixels):
+        """How many kilometers correspond to a length of this many pixels?"""
+
         return self.meters_per_pixel * pixels / 1000
 
 class Tile:
+    """
+    Represents a tile, i.e. the coordinates of a timelapse video. Video
+    downloading and processing are handled elsewhere.
+    """
+
     def __init__(self, level, col, row):
         self.level = level
         self.col = col
@@ -345,9 +388,14 @@ class Tile:
     def __repr__(self):
         return f"Tile({self.level}, {self.col}, {self.row})"
 
-    # TODO attribute this snippet: based on ...
     @classmethod
     def from_pixpoint_and_level(cls, pixpoint, level, metadata):
+        """
+        Based on the original JavaScript implementation found at:
+        https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/timelapse.js#L3367
+        """
+
+        # TODO same as in meters per pix function, dedup? move to level class?
         level_scale = math.pow(2, metadata.nlevels - 1 - level.index)
 
         col = round((pixpoint.x - (metadata.video_width * level_scale * 0.5)) / (metadata.tile_width * level_scale))
@@ -361,6 +409,8 @@ class Tile:
         return cls(level, col, row)
 
 class RawVideo:
+    """Responsible for downloading and storing timelapse videos."""
+
     def __init__(self, tile, base_url, temp_dir):
         self.tile = tile
         self.base_url = base_url
@@ -382,6 +432,8 @@ class RawVideo:
         self.__write_to_temp(r.content)
 
     def check_against(self, metadata):
+        """Verifies that the video matches the provided metadata."""
+
         clip = VideoFileClip(self.path)
         assert clip.w == metadata.video_width
         assert clip.h == metadata.video_height
@@ -389,6 +441,11 @@ class RawVideo:
         assert clip.duration == metadata.frames / metadata.fps
 
 class ReverseGeocoder:
+    """
+    Allows getting an approximate address or region (depending on zoom level)
+    for a geopoint, basically a thin wrapper around the Nominatim API.
+    """
+
     def __init__(self, nominatim_url, geopoint, level=12):
         self.nominatim_url = nominatim_url
         self.geopoint = geopoint
@@ -401,7 +458,7 @@ class ReverseGeocoder:
     def fetch(self):
         url = f"{self.nominatim_url}reverse.php?lat={self.geopoint.lat}&lon={self.geopoint.lon}&zoom={self.level.index}&accept-language=en&format=jsonv2"
 
-        # TODO note: the following two lines can throw exceptions but we don't handle them cause TODO
+        # TODO note: the following two lines can throw exceptions but we don't handle them cause TODO also in other places
         raw = requests.get(url)  # can throw requests.RequestException
         json = raw.json()  # can throw json.JSONDecodeError
 
@@ -415,22 +472,29 @@ class ReverseGeocoder:
         except KeyError as e:
             self.error = True
 
-# TODO rename level.index?
-
 class VideoEditor:
+    """This is where the magic happens!"""
+
     def __init__(self, video, geopoint, reverse_geocode, capture_times, attribution, twitter_handle):
+        """
+        Ideally, this class would require fewer constructor parameters – which
+        would be trivial if config and metadata were available globally. I tried
+        that but it's just too yucky.
+        """
+
         self.video = video
         self.geopoint = geopoint
         self.reverse_geocode = reverse_geocode
         self.capture_times = capture_times
 
-        # will be superimposed
         self.attribution = attribution
         self.twitter_handle = twitter_handle
 
         self.path = os.path.join(video.temp_dir, f"{video.tile.level.index}-{video.tile.row}-{video.tile.col}-processed.mp4")
 
     def __draw_text(self, text, fontsize):
+        """Draws tightly-trimmed text, returning an ImageClip."""
+
         fnt = ImageFont.truetype("assets/Optician-Sans.otf", fontsize)
 
         # measure dimensions of text (this is an upper bound due to whitespace
@@ -451,8 +515,14 @@ class VideoEditor:
         return ImageClip(np.array(txt))
 
     def __draw_progress_pieslice(self, size, completion):
+        """
+        Draws a pie-chart-esque progress meter at the given completion
+        percentage, returning an ImageClip.
+        """
 
-        # pieslice doesn't antialias, so work around that by drawing at 3x scale and then scaling down
+        # pieslice doesn't antialias, so work around that by drawing at 3x scale
+        # and then scaling down later
+        # TODO refactor a bit
         factor = 3
 
         size = factor * size
@@ -464,8 +534,14 @@ class VideoEditor:
         pie = pie.resize((int(size / factor), int(size / factor)))
         return ImageClip(np.array(pie))
 
-    # TODO make paths absolute via os.path.realpath(__file__), maybe also use that for temp and shapefile?
     def process(self):
+        """
+        Do all the work of turning a downloaded raw video into one with location
+        information, year meter, proper attribution, and a world map at the end.
+        There are a bunch of long lines and magic numbers here, so tread
+        lightly.
+        """
+
         tile = self.video.tile
         clip = VideoFileClip(self.video.path)
 
@@ -483,7 +559,7 @@ class VideoEditor:
         # process each frame separately
         frames = []
         for n, frame in enumerate(clip.iter_frames()):
-            print("processing frame " + str(n+1))
+            # TODO better name for clip
             clip = ImageClip(frame)
 
             pieslice_height = int(height / 13.5)  # manually dialled in to match font appearance
@@ -574,7 +650,8 @@ class VideoEditor:
         # finish!
         clip = concatenate_videoclips([clip, endcard_fade, endcard])
         clip = clip.set_fps(result_framerate)
-        clip.write_videofile(self.path)  # logger=None
+        #clip.write_videofile(self.path)
+        clip.write_videofile(self.path, logger=None)
 
 
 class Log:
@@ -654,38 +731,42 @@ class Log:
         sys.exit(1)
 
 class Tweeter:
-    """Basic class for tweeting videos, a simple wrapper around tweepy."""
+    """
+    Basic class for tweeting videos, a simple wrapper around the relevant
+    methods provided by the python-twitter library.
+    """
 
     def __init__(self, consumer_key, consumer_secret, access_token, access_token_secret):
-
-        # for references, see:
-        # http://docs.tweepy.org/en/latest/api.html#status-methods
-        # https://developer.twitter.com/en/docs/tweets/post-and-engage/guides/post-tweet-geo-guide
-        auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
-        auth.set_access_token(access_token, access_token_secret)
-        self.api = tweepy.API(auth)
+        self.api = twitter.Api(
+            consumer_key=consumer_key,
+            consumer_secret=consumer_secret,
+            access_token_key=access_token,
+            access_token_secret=access_token_secret,
+            input_encoding="utf-8"
+            )
 
     def upload(self, path):
         """Uploads a video to Twitter."""
 
-        return self.api.media_upload(path)
+        return self.api.UploadMediaChunked(path)
 
     def tweet(self, text, media, geopoint=None):
         if geopoint:
-            self.api.update_status(
+            self.api.PostUpdate(
                 text,
-                media_ids=[media.media_id],
-                lat=geopoint.lat,
-                long=geopoint.lon,
+                media=media,
+                latitude=geopoint.lat,
+                longitude=geopoint.lon,
                 display_coordinates=True
             )
         else:
-            self.api.update_status(text, media_ids=[media.media_id])
+            self.api.PostUpdate(text, media=media.media_id)
 
 def main():
+
     # load configuration either from config.ini or from a user-supplied file
     # (the latter option is handy if you want to run multiple instances of
-    # ærialbot with different configurations)
+    # this bot with different configurations)
     config_path = "config.ini"
     if (len(sys.argv) == 2):
         config_path = sys.argv[1]
@@ -715,10 +796,11 @@ def main():
             geopoint = shape.random_geopoint()
         logger.debug(geopoint)
 
+        # determine maximum allowable meters per pixel
         max_meters_per_pixel = None
         if isinstance(c.max_meters_per_pixel, tuple):
             logger.info("Randomizing meters-per-pixel constraint in the configured range...")
-            max_meters_per_pixel = random.randrange(*c.max_meters_per_pixel)
+            max_meters_per_pixel = random.randrange(c.max_meters_per_pixel[0], c.max_meters_per_pixel[1] + 1)
         else:
             logger.info("Using configured meters-per-pixel constraint...")
             max_meters_per_pixel = c.max_meters_per_pixel
@@ -747,14 +829,14 @@ def main():
         logger.info("Verifying against metadata...")
         video.check_against(metadata)
 
-        logger.info("Reverse geocoding the point...")
+        logger.info("Looking up the name of wherever the point is located...")
         reverse_geocode = ReverseGeocoder(c.nominatim_url, geopoint, level)
         reverse_geocode.fetch()
+        # TODO fix ß, umlauts, accents, etc. at some point?
         if not reverse_geocode.error:
             logger.debug(reverse_geocode.name)
 
         logger.info("Editing video (this may take a minute or so)...")
-        # TODO make basic progress thingy, or just split up into sections, like timelapse, endcard, render?
         editor = VideoEditor(video, geopoint, reverse_geocode, metadata.capture_times, c.attribution, c.twitter_handle)
         editor.process()
         logger.debug(editor.path)
@@ -771,6 +853,7 @@ def main():
             media = tweeter.upload(editor.path)
 
             logger.info("Sending tweet...")
+            # TODO more variables: area name from revgeocoder, like aerialbot? a x b km?
             tweet_text = c.tweet_text.format(
                 latitude=geopoint.lat,
                 longitude=geopoint.lon,
