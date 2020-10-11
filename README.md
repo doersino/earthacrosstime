@@ -2,7 +2,7 @@
 
 TODO what does it do?
 
-TODO example gif made from screen recording of tweet?
+TODO example gif made from video or screen recording of tweet?
 
 TODO link to bot
 
