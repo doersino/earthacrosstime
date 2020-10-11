@@ -30,14 +30,16 @@ class Config:
         self.timemachine_repository_url = config['TIMEMACHINE']['timemachine_repository_url']
         if (self.timemachine_repository_url[-1] != "/"):
             self.timemachine_repository_url += "/"
+        self.attribution = config['TIMEMACHINE']['attribution']
 
         self.shapefile = config['GEOGRAPHY']['shapefile']
         self.point = config['GEOGRAPHY']['point']
         self.max_meters_per_pixel = config['GEOGRAPHY']['max_meters_per_pixel']
+        self.nominatim_url = config['GEOGRAPHY']['nominatim_url']
+        if (self.nominatim_url[-1] != "/"):
+            self.nominatim_url += "/"
 
-        self.attribution = config['VIDEO']['attribution']
-        self.twitter_handle = config['VIDEO']['twitter_handle']
-
+        self.twitter_handle = config['TWITTER']['twitter_handle']
         self.consumer_key = config['TWITTER']['consumer_key']
         self.consumer_secret = config['TWITTER']['consumer_secret']
         self.access_token = config['TWITTER']['access_token']
@@ -61,6 +63,9 @@ class Metadata:
         self.tile_height = tile_height
         self.video_width = video_width
         self.video_height = video_height
+
+    def __repr__(self):
+        return f"Metadata({self.timemachine_repository_url}, {self.dataset}, {self.projection_bounds}, {self.capture_times}, {self.frames}, {self.fps}, {self.level_info}, {self.nlevels}, {self.width}, {self.height}, {self.tile_width}, {self.tile_height}, {self.video_width}, {self.video_height})"
 
 class MetadataFetcher:
     def __init__(self, timemachine_repository_url):
@@ -160,7 +165,7 @@ class GeoPoint:
         self.lon = lon
 
     def __repr__(self):
-        return f"GeoPoint{self.__dict__}"
+        return f"GeoPoint({self.lat}, {self.lon})"
 
     def fancy(self):
         """Stringifies the point in a more fancy way than __repr__, e.g.
@@ -316,11 +321,17 @@ class PixPoint:
         self.x = x
         self.y = y
 
+    def __repr__(self):
+        return f"PixPoint({self.x}, {self.y})"
+
 class ZoomLevel:
     def __init__(self, index, lat, meters_per_pixel):
         self.index = index
         self.lat = lat
         self.meters_per_pixel = meters_per_pixel
+
+    def __repr__(self):
+        return f"ZoomLevel({self.index}, {self.lat}, {self.meters_per_pixel})"
 
     def kilometers(self, pixels):
         return self.meters_per_pixel * pixels / 1000
@@ -330,6 +341,9 @@ class Tile:
         self.level = level
         self.col = col
         self.row = row
+
+    def __repr__(self):
+        return f"Tile({self.level}, {self.col}, {self.row})"
 
     # TODO attribute this snippet: based on ...
     @classmethod
@@ -364,8 +378,7 @@ class RawVideo:
     def download(self):
         r = requests.get(self.url)
         if r.status_code != 200:
-            raise ValueError(f"Unable to download tile from {self.url}, status code {r.status_code}.")
-
+            raise ValueError(f"unable to download tile from {self.url}, status code {r.status_code}")
         self.__write_to_temp(r.content)
 
     def check_against(self, metadata):
@@ -375,24 +388,29 @@ class RawVideo:
         assert clip.fps == metadata.fps
         assert clip.duration == metadata.frames / metadata.fps
 
-# TODO use this
 class ReverseGeocoder:
-    def __init__(self, geopoint, level=12):
+    def __init__(self, nominatim_url, geopoint, level=12):
+        self.nominatim_url = nominatim_url
         self.geopoint = geopoint
         self.level = level
 
         self.error = False
         self.attribution = None
-        self.display_name = None
+        self.name = None
 
     def fetch(self):
+        url = f"{self.nominatim_url}reverse.php?lat={self.geopoint.lat}&lon={self.geopoint.lon}&zoom={self.level.index}&accept-language=en&format=jsonv2"
 
-        # TODO make this configurable?
-        url = f"https://nominatim.openstreetmap.org/reverse.php?lat={self.geopoint.lat}&lon={self.geopoint.lon}&zoom={self.level.index}&accept-language=en&format=jsonv2"
+        # TODO note: the following two lines can throw exceptions but we don't handle them cause TODO
         raw = requests.get(url)  # can throw requests.RequestException
         json = raw.json()  # can throw json.JSONDecodeError
+
         try:
             self.attribution = json['licence']
+        except KeyError as e:
+            self.attribution = ""
+
+        try:
             self.name = json['display_name']
         except KeyError as e:
             self.error = True
@@ -451,6 +469,8 @@ class VideoEditor:
         tile = self.video.tile
         clip = VideoFileClip(self.video.path)
 
+        # TODO optionally resize to 1080p or 720p?
+
         width = clip.w
         height = clip.h
 
@@ -495,7 +515,7 @@ class VideoEditor:
         # add end card
         # https://commons.wikimedia.org/wiki/File:World_location_map_mono.svg
         # https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/World_location_map_mono.svg/3840px-World_location_map_mono.svg.png
-        background = ColorClip(clip.size, color=(62,62,62))
+        background = ColorClip((width, height), color=(62,62,62))
         worldmap = ImageClip("assets/map.png")
         map_scale = background.size[0] / worldmap.size[0]
         worldmap = worldmap.resize((background.size[0], map_scale * worldmap.size[1]))
@@ -511,6 +531,7 @@ class VideoEditor:
         else:
             geopoint_x = pointer_x - geopoint.size[0] - 0.5 * pointer.size[0]
         geopoint = geopoint.set_position((geopoint_x, geopoint_y))
+        geolocation = None
         if not self.reverse_geocode.error:
             geolocation = self.__draw_text(self.reverse_geocode.name, int(1.1 * pointer.size[1]))
             geolocation_x = None
@@ -521,18 +542,18 @@ class VideoEditor:
                 geolocation_x = pointer_x - geolocation.size[0] - 0.5 * pointer.size[0]
             geolocation = geolocation.set_position((geolocation_x, geolocation_y))
 
-        credit_text = [
+        credit_lines = [
             "@" + self.twitter_handle,
             "https://twitter.com/" + self.twitter_handle + ", bot source code: https://github.com/doersino/earthacrosstime, typeface: optician sans",
             "video url: " + self.video.url
         ]
         if not self.reverse_geocode.error:
-            credit_text.append("reverse geocoding: " + self.reverse_geocode.attribution.replace("©", "(c)"))
-        credit_lines = []
+            credit_lines.append("reverse geocoding: " + self.reverse_geocode.attribution.replace("©", "(c)"))
+        credit = []
         fontsize = int(height / 45)
         accumulated_height = -fontsize
-        for n, text in enumerate(reversed(credit_text)):
-            if n == len(credit_text) - 1:
+        for n, text in enumerate(reversed(credit_lines)):
+            if n == len(credit_lines) - 1:
                 fontsize = int(height / 30)
 
             line = self.__draw_text(text, fontsize)
@@ -541,20 +562,12 @@ class VideoEditor:
             line = line.set_position((line_x, line_y))
 
             accumulated_height += fontsize
-            credit_lines.append(line)
+            credit.append(line)
 
-        """
-        credit_small_line2 = self.__draw_text(self.video.url, int(height / 40))
-        credit_small_line2 = credit_small_line2.set_position((width/2 - credit_small_line2.size[0]/2, height - credit_small_line2.size[1] - margin))
-        credit_small_line1 = self.__draw_text("twitter.com/" + self.twitter_handle + " • bot source code: github.com/doersino/earthacrosstime • typeface: optician sans", int(height / 40))
-        credit_small_line1 = credit_small_line1.set_position((width/2 - credit_small_line1.size[0]/2, height - credit_small_line1.size[1] - credit_small_line2.size[1] * 1.5 - margin))
-        credit = self.__draw_text("@" + self.twitter_handle, int(height / 22))
-        credit = credit.set_position((width/2 - credit.size[0]/2, height - credit.size[1] - credit_small_line1.size[1] * 1.5 - credit_small_line2.size[1] * 2 - margin))
-        """
-
-        endcard = CompositeVideoClip([background, worldmap, pointer, geopoint] + credit_lines)#credit, credit_small_line1, credit_small_line2])
+        endcard_components = [background, worldmap, pointer, geopoint]
         if not self.reverse_geocode.error:
-            endcard = CompositeVideoClip([background, worldmap, pointer, geopoint, geolocation] + credit_lines)#credit, credit_small_line1, credit_small_line2])
+            endcard_components.append(geolocation)
+        endcard = CompositeVideoClip(endcard_components + credit)
         endcard_fade = CompositeVideoClip([final_clip.set_duration(endcard_crossfade).fadeout(endcard_crossfade), endcard.set_duration(endcard_crossfade).crossfadein(endcard_crossfade)])
         endcard = endcard.set_duration(4)
 
@@ -640,6 +653,35 @@ class Log:
             self.critical(line)
         sys.exit(1)
 
+class Tweeter:
+    """Basic class for tweeting videos, a simple wrapper around tweepy."""
+
+    def __init__(self, consumer_key, consumer_secret, access_token, access_token_secret):
+
+        # for references, see:
+        # http://docs.tweepy.org/en/latest/api.html#status-methods
+        # https://developer.twitter.com/en/docs/tweets/post-and-engage/guides/post-tweet-geo-guide
+        auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
+        auth.set_access_token(access_token, access_token_secret)
+        self.api = tweepy.API(auth)
+
+    def upload(self, path):
+        """Uploads a video to Twitter."""
+
+        return self.api.media_upload(path)
+
+    def tweet(self, text, media, geopoint=None):
+        if geopoint:
+            self.api.update_status(
+                text,
+                media_ids=[media.media_id],
+                lat=geopoint.lat,
+                long=geopoint.lon,
+                display_coordinates=True
+            )
+        else:
+            self.api.update_status(text, media_ids=[media.media_id])
+
 def main():
     # load configuration either from config.ini or from a user-supplied file
     # (the latter option is handy if you want to run multiple instances of
@@ -656,6 +698,7 @@ def main():
 
         logger.info("Fetching and parsing metadata...")
         metadata = MetadataFetcher(c.timemachine_repository_url).fetch()
+        logger.debug(metadata)
 
         # compute point
         geopoint = None
@@ -686,35 +729,62 @@ def main():
 
         logger.info("Computing pixel point from point...")
         pixpoint = proj.geopoint_to_pixpoint(geopoint)
+        logger.debug(pixpoint)
 
         logger.info("Determining zoom level based on meters-per-pixel constraint...")
         level = geopoint.determine_level(proj, metadata.nlevels, max_meters_per_pixel)
+        logger.debug(level)
 
         logger.info("Initializing timelapse tile at computed pixel point and level...")
         tile = Tile.from_pixpoint_and_level(pixpoint, level, metadata)
+        logger.debug(tile)
 
         logger.info("Downloading video for tile...")
         video = RawVideo(tile, f"{metadata.timemachine_repository_url}{metadata.dataset}", c.temp_dir)
         video.download()
-        # TODO debug url?
+        logger.debug(video.url)
 
         logger.info("Verifying against metadata...")
         video.check_against(metadata)
 
         logger.info("Reverse geocoding the point...")
-        reverse_geocode = ReverseGeocoder(geopoint, level)
+        reverse_geocode = ReverseGeocoder(c.nominatim_url, geopoint, level)
         reverse_geocode.fetch()
-        logger.debug(reverse_geocode)
+        if not reverse_geocode.error:
+            logger.debug(reverse_geocode.name)
 
         logger.info("Editing video (this may take a minute or so)...")
         # TODO make basic progress thingy, or just split up into sections, like timelapse, endcard, render?
         editor = VideoEditor(video, geopoint, reverse_geocode, metadata.capture_times, c.attribution, c.twitter_handle)
         editor.process()
-        print(editor.path)
+        logger.debug(editor.path)
 
-        # TODO add __repr__s for debug logging
-        # TODO add tweeting
-        # TODO add a buncha comments, cleanup some stuff
+        tweeting = all(x is not None for x in [c.consumer_key, c.consumer_secret, c.access_token, c.access_token_secret])
+        if tweeting:
+            logger.info("Connecting to Twitter...")
+            tweeter = Tweeter(c.consumer_key, c.consumer_secret, c.access_token, c.access_token_secret)
+
+            osm_url = f"https://www.openstreetmap.org/#map={level.index}/{geopoint.lat}/{geopoint.lon}"
+            googlemaps_url = f"https://www.google.com/maps/@{geopoint.lat},{geopoint.lon},{level.index}z"
+
+            logger.info("Uploading video to Twitter...")
+            media = tweeter.upload(editor.path)
+
+            logger.info("Sending tweet...")
+            tweet_text = c.tweet_text.format(
+                latitude=geopoint.lat,
+                longitude=geopoint.lon,
+                point_fancy=geopoint.fancy(),
+                osm_url=osm_url,
+                googlemaps_url=googlemaps_url
+            )
+            logger.debug(tweet_text)
+            if c.include_location_in_metadata:
+                tweeter.tweet(tweet_text, media, geopoint)
+            else:
+                tweeter.tweet(tweet_text, media)
+
+        logger.info("All done!")
 
     except Exception as e:
         logger.exception(e)
