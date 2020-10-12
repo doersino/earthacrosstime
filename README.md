@@ -31,7 +31,7 @@ Here's why this bot is a [Good Bot](https://www.reddit.com/r/OutOfTheLoop/commen
 * **Correctness:** Because neighboring meridians are closer at the poles than at the equator, uniformly sampling the allowable range of latitudes would bias the generated random points toward the poles. Instead, this bot makes sure they are distributed with regard to surface area.
 * **Automatic zoom level selection:** Simply supply a maximum allowable number of meters per pixel – the code will then take care of dialing in a (more than) sufficient zoom level.
 * **Comes with batteries included:** The `assets/world-shapefile/` directory contains a shapefile providing the outlines of the continents and most islands. More shapefiles, along with a guide on how to convert third-party shapefiles to the correct format, can be found [here](https://github.com/doersino/aerialbot/tree/master/shapefiles).
-* **Cares about typography:** The text that's superimposed onto the result video is aligned with utmost precision. Just in case you were wondering.
+* **Cares about typography:** The text that's superimposed onto the result videos is aligned with utmost precision. Just in case you were wondering.
 * **Geotagging:** Tweets will be geotagged with the exact location – you can disable this, of course.
 * **Logging:** Keeps a log file – whether that's for debugging or reminiscing is your call. Again, you can disable this easily.
 
