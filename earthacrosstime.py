@@ -39,6 +39,7 @@ class Config:
         if (self.timemachine_repository_url[-1] != "/"):
             self.timemachine_repository_url += "/"
         self.attribution = config['TIMEMACHINE']['attribution']
+        self.resize = config['TIMEMACHINE']['resize']
 
         self.shapefile = config['GEOGRAPHY']['shapefile']
         self.point = config['GEOGRAPHY']['point']
@@ -86,18 +87,27 @@ class MetadataFetcher:
     def __init__(self, timemachine_repository_url):
         self.timemachine_repository_url = timemachine_repository_url
 
-    # TODO abstract: this and next
+    def __fetch_json(self, url):
+        """
+        Fetches and parses a JSON file. During fetching, a
+        requests.RequestException may be raised, and during parsing, a
+        json.JSONDecodeError may occur – neither of them is worth catching since
+        this bot can't do anything useful without metadata, anyway.
+        """
+
+        raw = requests.get(url)
+        json = raw.json()
+        return json
+
     def __fetch_tmjson(self):
         tmjson_url = self.timemachine_repository_url + "tm.json"
-        tmjson_raw = requests.get(tmjson_url)  # can throw requests.RequestException
-        tmjson = tmjson_raw.json()  # can throw json.JSONDecodeError
-        return tmjson
+        return self.__fetch_json(tmjson_url)
 
     def __fetch_rjson(self, dataset):
-        rjson_url = self.timemachine_repository_url + dataset + "/" + "r.json"  # https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/timelapse.js#L3826
-        rjson_raw = requests.get(rjson_url)  # can throw requests.RequestException
-        rjson = rjson_raw.json()  # can throw json.JSONDecodeError
-        return rjson
+
+        # matches https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/timelapse.js#L3826
+        rjson_url = self.timemachine_repository_url + dataset + "/" + "r.json"
+        return self.__fetch_json(rjson_url)
 
     def fetch(self):
         """This function does all the "heavy" lifting."""
@@ -128,7 +138,6 @@ class MetadataFetcher:
 
         return Metadata(self.timemachine_repository_url, dataset, projection_bounds, capture_times, frames, fps, level_info, nlevels, width, height, tile_width, tile_height, video_width, video_height)
 
-# TODO attribute: based on ...
 class MercatorProjection:
     """
     The particular flavor of Web Mercator Projection used by Time Machine. Based
@@ -256,17 +265,15 @@ class GeoPoint:
         https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/scaleBar.js#L457
         """
 
-        # TODO cleanup, convert to radians with built-in functions
-        radian_per_degree = math.pi / 180
         earth_radius = 6371  # in kilometers
-        c1 = radian_per_degree * earth_radius
+        c1 = math.radians(earth_radius)
 
         point = proj.geopoint_to_pixpoint(self)
         for level in reversed(range(nlevels)):
             scale = 2 ** (level - (nlevels - 1))
             one_pixel_off = proj.pixpoint_to_geopoint(PixPoint((point.x + 1 / scale), point.y))
             degrees_per_pixel = abs(self.lon - one_pixel_off.lon)
-            v1 = degrees_per_pixel * math.cos(self.lat * radian_per_degree)
+            v1 = degrees_per_pixel * math.cos(math.radians(self.lat))
             meters_per_pixel = c1 * v1 * 1000
 
             if meters_per_pixel > max_meters_per_pixel or level == 0:
@@ -395,8 +402,7 @@ class Tile:
         https://github.com/CMU-CREATE-Lab/timemachine-viewer/blob/fb920433fcb8b5a7a84279142c5e27e549a852aa/js/org/gigapan/timelapse/timelapse.js#L3367
         """
 
-        # TODO same as in meters per pix function, dedup? move to level class?
-        level_scale = math.pow(2, metadata.nlevels - 1 - level.index)
+        level_scale = 2 ** (metadata.nlevels - 1 - level.index)
 
         col = round((pixpoint.x - (metadata.video_width * level_scale * 0.5)) / (metadata.tile_width * level_scale))
         col = max(col, 0)
@@ -458,9 +464,11 @@ class ReverseGeocoder:
     def fetch(self):
         url = f"{self.nominatim_url}reverse.php?lat={self.geopoint.lat}&lon={self.geopoint.lon}&zoom={self.level.index}&accept-language=en&format=jsonv2"
 
-        # TODO note: the following two lines can throw exceptions but we don't handle them cause TODO also in other places
-        raw = requests.get(url)  # can throw requests.RequestException
-        json = raw.json()  # can throw json.JSONDecodeError
+        # note that the following two lines can throw exceptions – they aren't
+        # caught since I rather be aware that something's wrong via the emails
+        # the cron daemon sends me on errors
+        raw = requests.get(url)
+        json = raw.json()
 
         try:
             self.attribution = json['licence']
@@ -470,12 +478,13 @@ class ReverseGeocoder:
         try:
             self.name = json['display_name']
         except KeyError as e:
+            self.name = ""
             self.error = True
 
 class VideoEditor:
     """This is where the magic happens!"""
 
-    def __init__(self, video, geopoint, reverse_geocode, capture_times, attribution, twitter_handle):
+    def __init__(self, video, resize, geopoint, area_size, capture_times, attribution, reverse_geocode, twitter_handle):
         """
         Ideally, this class would require fewer constructor parameters – which
         would be trivial if config and metadata were available globally. I tried
@@ -483,19 +492,121 @@ class VideoEditor:
         """
 
         self.video = video
+        self.resize = resize
         self.geopoint = geopoint
-        self.reverse_geocode = reverse_geocode
+        self.area_size = area_size
         self.capture_times = capture_times
-
         self.attribution = attribution
+        self.reverse_geocode = reverse_geocode
         self.twitter_handle = twitter_handle
 
         self.path = os.path.join(video.temp_dir, f"{video.tile.level.index}-{video.tile.row}-{video.tile.col}-processed.mp4")
 
-    def __draw_text(self, text, fontsize):
-        """Draws tightly-trimmed text, returning an ImageClip."""
+        self.clip = None
 
-        fnt = ImageFont.truetype("assets/Optician-Sans.otf", fontsize)
+    def __draw_text(self, text, fontsize):
+        """
+        Draws tightly-trimmed text, returning an ImageClip. Characters not
+        available in Optician Sans will be replaced with similar characters or
+        question marks, which is a terrible hack I feel bad about.
+        """
+
+        # load font
+        fnt_path = "assets/optician-sans.otf"
+        fnt = ImageFont.truetype(fnt_path, fontsize)
+
+        # replace characters that have some sort of available equivalent
+        replacements = {
+            "©": "(c)",
+            "ß": "ss",
+            "À": "A",
+            "Á": "A",
+            "Â": "A",
+            "Ã": "A",
+            "Ä": "AE",
+            "Ç": "C",
+            "È": "E",
+            "É": "E",
+            "Ê": "E",
+            "Ë": "E",
+            "Ì": "I",
+            "Í": "I",
+            "Î": "I",
+            "Ï": "I",
+            "Ñ": "N",
+            "Ò": "O",
+            "Ó": "O",
+            "Ô": "O",
+            "Õ": "O",
+            "Ö": "OE",
+            "Ù": "U",
+            "Ú": "U",
+            "Û": "U",
+            "Ü": "UE",
+            "Ý": "Y",
+            "à": "a",
+            "á": "a",
+            "â": "a",
+            "ã": "a",
+            "ä": "ae",
+            "ç": "c",
+            "è": "e",
+            "é": "e",
+            "ê": "e",
+            "ë": "e",
+            "ì": "i",
+            "í": "i",
+            "î": "i",
+            "ï": "i",
+            "ñ": "n",
+            "ò": "o",
+            "ó": "o",
+            "ô": "o",
+            "õ": "o",
+            "ö": "oe",
+            "ù": "u",
+            "ú": "u",
+            "û": "u",
+            "ü": "ue",
+            "ý": "y",
+            "ÿ": "y",
+            "Ĩ": "I",
+            "ĩ": "i",
+            "ı": "i",
+            "Ĵ": "j",
+            "ĵ": "j",
+            "Ł": "L",
+            "ł": "l",
+            "Ń": "N",
+            "ń": "n",
+            "Œ": "OE",
+            "œ": "oe",
+            "Ŕ": "R",
+            "Ŗ": "R",
+            "ŗ": "r",
+            "Ř": "R",
+            "ř": "r",
+            "Š": "S",
+            "š": "s",
+            "Ÿ": "Y",
+            "Ž": "Z",
+            "ž": "z"
+            }
+        for r in replacements:
+            text = text.replace(r, replacements[r])
+
+        # replace characters that don't have available equivalents with "?";
+        # list generated by dropping the font into Wakamai Fondue (see
+        # https://wakamaifondue.com/), unchecking "Layout features", and running
+        # the following JavaScript snippet in the console:
+        # Array.from(document.querySelectorAll(".character-set .label")).map(n => "\\u" + n.innerText.padStart(4, 0)).join("")
+        available_chars = list("\u0000\u000D\u0020\u0021\u0022\u0023\u0025\u0026\u0027\u0028\u0029\u002A\u002B\u002C\u002D\u002E\u002F\u0030\u0031\u0032\u0033\u0034\u0035\u0036\u0037\u0038\u0039\u003A\u003B\u003D\u003F\u0040\u0041\u0042\u0043\u0044\u0045\u0046\u0047\u0048\u0049\u004A\u004B\u004C\u004D\u004E\u004F\u0050\u0051\u0052\u0053\u0054\u0055\u0056\u0057\u0058\u0059\u005A\u005B\u005C\u005D\u005F\u0061\u0062\u0063\u0064\u0065\u0066\u0067\u0068\u0069\u006A\u006B\u006C\u006D\u006E\u006F\u0070\u0071\u0072\u0073\u0074\u0075\u0076\u0077\u0078\u0079\u007A\u007B\u007C\u007D\u00B0\u00C5\u00C6\u00D7\u00D8\u00E5\u00E6\u00F7\u00F8\u2013\u2014\u2018\u2019\u201A\u201C\u201D\u201E\u2022\u20AC\u2212")
+        def rp(c):
+            if c not in available_chars:
+                return "?"
+            return c
+        text = map(rp, list(text))
+        text = "".join(text)
 
         # measure dimensions of text (this is an upper bound due to whitespace
         # included above/below letters), see
@@ -509,7 +620,9 @@ class VideoEditor:
         d = ImageDraw.Draw(txt)
         d.text((0,0), text, font=fnt, fill=(255,255,255,255))
 
-        # crop to actual dimensions now that we can measure those
+        # crop to actual dimensions now that we can measure those (this
+        # sometimes cuts off a bit too much, but there doesn't seem to be a way
+        # of fixing that without rolling my own algorithm)
         txt = txt.crop(txt.getbbox())
 
         return ImageClip(np.array(txt))
@@ -520,21 +633,19 @@ class VideoEditor:
         percentage, returning an ImageClip.
         """
 
-        # pieslice doesn't antialias, so work around that by drawing at 3x scale
-        # and then scaling down later
-        # TODO refactor a bit
-        factor = 3
+        # ImageDraw.Draw.pieslice doesn't antialias, so work around that by
+        # drawing at 3x scale and then scaling down later
+        draw_size = 3 * size
 
-        size = factor * size
-        pie = Image.new("RGBA", (size,size), (255,255,255,0))
+        pie = Image.new("RGBA", (draw_size,draw_size), (255,255,255,0))
         d = ImageDraw.Draw(pie)
-        d.pieslice([0,0,size-1,size-1], 0, 360, fill=(255,255,255,128))
-        d.pieslice([0,0,size-1,size-1], -90, completion * 360 - 90, fill=(255,255,255,255))
+        d.pieslice([0,0,draw_size-1,draw_size-1], 0, 360, fill=(255,255,255,128))
+        d.pieslice([0,0,draw_size-1,draw_size-1], -90, completion * 360 - 90, fill=(255,255,255,255))
 
-        pie = pie.resize((int(size / factor), int(size / factor)))
+        pie = pie.resize((size,size))
         return ImageClip(np.array(pie))
 
-    def process(self):
+    def edit(self):
         """
         Do all the work of turning a downloaded raw video into one with location
         information, year meter, proper attribution, and a world map at the end.
@@ -543,24 +654,34 @@ class VideoEditor:
         """
 
         tile = self.video.tile
-        clip = VideoFileClip(self.video.path)
+        raw_video = VideoFileClip(self.video.path)
 
-        # TODO optionally resize to 1080p or 720p?
+        resized_video = raw_video
+        if self.resize is not None:
+            resized_video = raw_video.resize((1280,720))
 
-        width = clip.w
-        height = clip.h
+        width = resized_video.w
+        height = resized_video.h
 
         result_framerate = 24
         images_per_second = 3
         margin = int(height / 30)
         final_frame_persist = 1
         endcard_crossfade = 0.67
+        endcard_persist = 4
+
+        # define overlays that will be constant across all frames
+        geopoint = self.__draw_text(self.geopoint.fancy(), int(height / 15))
+        geopoint = geopoint.set_position((margin, margin))
+        area = self.__draw_text(self.area_size, int(height / 22))
+        area = area.set_position((margin, margin + geopoint.size[1] + int(0.67 * area.size[1])))
+        attribution = self.__draw_text(self.attribution, int(height / 40))
+        attribution = attribution.set_position((width - attribution.size[0] - margin, height - attribution.size[1] - margin))
 
         # process each frame separately
         frames = []
-        for n, frame in enumerate(clip.iter_frames()):
-            # TODO better name for clip
-            clip = ImageClip(frame)
+        for n, frame in enumerate(resized_video.iter_frames()):
+            frame = ImageClip(frame)
 
             pieslice_height = int(height / 13.5)  # manually dialled in to match font appearance
             pieslice = self.__draw_progress_pieslice(pieslice_height, n / (len(self.capture_times) - 1))
@@ -568,33 +689,24 @@ class VideoEditor:
             year = self.__draw_text(self.capture_times[n], int(height / 7))
             year = year.set_position((width - year.size[0] - pieslice.size[0] - margin - margin, margin))
 
-            # all of the following could be done outside the loop, which seems like it would be faster, but it's way slower
-            # TODO still, define them outside?
-            geopoint = self.__draw_text(self.geopoint.fancy(), int(height / 15))
-            geopoint = geopoint.set_position((margin, margin))
-            area_w = round(tile.level.kilometers(width), 2)
-            area_h = round(tile.level.kilometers(height), 2)
-            area = self.__draw_text(f"{area_w} x {area_h} km", int(height / 22))
-            area = area.set_position((margin, margin + geopoint.size[1] + int(0.67 * area.size[1])))
-            attribution = self.__draw_text(self.attribution, int(height / 40))
-            attribution = attribution.set_position((width - attribution.size[0] - margin, height - attribution.size[1] - margin))
-
-            clip = CompositeVideoClip([clip, pieslice, year, geopoint, area, attribution])
-            frames.append(clip)
+            # composite with overlays defined outside this loop
+            frame = CompositeVideoClip([frame, pieslice, year, geopoint, area, attribution])
+            frames.append(frame)
 
         # concatenate
-        clips = [clip.set_duration(1 / images_per_second) for clip in frames]
-        final_clip = clips[-1]
-        clips[-1] = clips[-1].set_duration(1 / images_per_second + final_frame_persist)
-        clip = concatenate_videoclips(clips)
+        frames_list = [frame.set_duration(1 / images_per_second) for frame in frames]
+        final_frame = frames_list[-1]
+        frames_list[-1] = final_frame.set_duration(1 / images_per_second + final_frame_persist)
+        frames = concatenate_videoclips(frames_list)
 
         # add end card
-        # https://commons.wikimedia.org/wiki/File:World_location_map_mono.svg
-        # https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/World_location_map_mono.svg/3840px-World_location_map_mono.svg.png
         background = ColorClip((width, height), color=(62,62,62))
+
+        # map via https://commons.wikimedia.org/wiki/File:World_location_map_mono.svg
         worldmap = ImageClip("assets/map.png")
         map_scale = background.size[0] / worldmap.size[0]
         worldmap = worldmap.resize((background.size[0], map_scale * worldmap.size[1]))
+
         pointer = ImageClip("assets/pointer.png").resize(map_scale)
         pointer_x = worldmap.size[0]/2 * (1 + (self.geopoint.lon / 180)) - pointer.size[0]/2
         pointer_y = worldmap.size[1]/2 * (1 - (self.geopoint.lat / 90)) - pointer.size[1]/2 # "-" since x increased from top while lat increases from bottom
@@ -624,7 +736,7 @@ class VideoEditor:
             "video url: " + self.video.url
         ]
         if not self.reverse_geocode.error:
-            credit_lines.append("reverse geocoding: " + self.reverse_geocode.attribution.replace("©", "(c)"))
+            credit_lines.append("reverse geocoding: " + self.reverse_geocode.attribution)
         credit = []
         fontsize = int(height / 45)
         accumulated_height = -fontsize
@@ -644,14 +756,19 @@ class VideoEditor:
         if not self.reverse_geocode.error:
             endcard_components.append(geolocation)
         endcard = CompositeVideoClip(endcard_components + credit)
-        endcard_fade = CompositeVideoClip([final_clip.set_duration(endcard_crossfade).fadeout(endcard_crossfade), endcard.set_duration(endcard_crossfade).crossfadein(endcard_crossfade)])
-        endcard = endcard.set_duration(4)
+        endcard_fade = CompositeVideoClip([final_frame.set_duration(endcard_crossfade).fadeout(endcard_crossfade), endcard.set_duration(endcard_crossfade).crossfadein(endcard_crossfade)])
+        endcard = endcard.set_duration(endcard_persist)
 
-        # finish!
-        clip = concatenate_videoclips([clip, endcard_fade, endcard])
+        # finish
+        clip = concatenate_videoclips([frames, endcard_fade, endcard])
         clip = clip.set_fps(result_framerate)
-        #clip.write_videofile(self.path)
-        clip.write_videofile(self.path, logger=None)
+        self.clip = clip
+
+    def render(self):
+        """Render the assembled video."""
+
+        #self.clip.write_videofile(self.path)
+        self.clip.write_videofile(self.path, logger=None)
 
 
 class Log:
@@ -832,13 +949,21 @@ def main():
         logger.info("Looking up the name of wherever the point is located...")
         reverse_geocode = ReverseGeocoder(c.nominatim_url, geopoint, level)
         reverse_geocode.fetch()
-        # TODO fix ß, umlauts, accents, etc. at some point?
         if not reverse_geocode.error:
             logger.debug(reverse_geocode.name)
 
-        logger.info("Editing video (this may take a minute or so)...")
-        editor = VideoEditor(video, geopoint, reverse_geocode, metadata.capture_times, c.attribution, c.twitter_handle)
-        editor.process()
+        logger.info("Determining how large the area covered is...")
+        area_w = round(tile.level.kilometers(metadata.video_width), 2)
+        area_h = round(tile.level.kilometers(metadata.video_height), 2)
+        area_size = f"{area_w} × {area_h} km"
+        logger.debug(area_size)
+
+        logger.info("Editing video...")
+        editor = VideoEditor(video, c.resize, geopoint, area_size, metadata.capture_times, c.attribution, reverse_geocode, c.twitter_handle)
+        editor.edit()
+
+        logger.info("Rendering video (this may take a minute or so)...")
+        editor.render()
         logger.debug(editor.path)
 
         tweeting = all(x is not None for x in [c.consumer_key, c.consumer_secret, c.access_token, c.access_token_secret])
@@ -846,20 +971,26 @@ def main():
             logger.info("Connecting to Twitter...")
             tweeter = Tweeter(c.consumer_key, c.consumer_secret, c.access_token, c.access_token_secret)
 
+            # time machine levels aren't quite the same as the zoom levels used
+            # by these mapping services, but they're close enough the be useful
             osm_url = f"https://www.openstreetmap.org/#map={level.index}/{geopoint.lat}/{geopoint.lon}"
             googlemaps_url = f"https://www.google.com/maps/@{geopoint.lat},{geopoint.lon},{level.index}z"
+
+            year_range = f"{metadata.capture_times[0]} – {metadata.capture_times[-1]}"
 
             logger.info("Uploading video to Twitter...")
             media = tweeter.upload(editor.path)
 
             logger.info("Sending tweet...")
-            # TODO more variables: area name from revgeocoder, like aerialbot? a x b km?
             tweet_text = c.tweet_text.format(
                 latitude=geopoint.lat,
                 longitude=geopoint.lon,
                 point_fancy=geopoint.fancy(),
+                area_size=area_size,
                 osm_url=osm_url,
-                googlemaps_url=googlemaps_url
+                googlemaps_url=googlemaps_url,
+                location=reverse_geocode.name,
+                year_range=year_range
             )
             logger.debug(tweet_text)
             if c.include_location_in_metadata:
