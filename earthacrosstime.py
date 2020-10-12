@@ -1,4 +1,3 @@
-import json
 import math
 import os
 import random
@@ -36,7 +35,7 @@ class Config:
         self.temp_dir = config['GENERAL']['temp_dir']
 
         self.timemachine_repository_url = config['TIMEMACHINE']['timemachine_repository_url']
-        if (self.timemachine_repository_url[-1] != "/"):
+        if self.timemachine_repository_url[-1] != "/":
             self.timemachine_repository_url += "/"
         self.attribution = config['TIMEMACHINE']['attribution']
         self.resize = config['TIMEMACHINE']['resize']
@@ -45,7 +44,7 @@ class Config:
         self.point = config['GEOGRAPHY']['point']
         self.max_meters_per_pixel = config['GEOGRAPHY']['max_meters_per_pixel']
         self.nominatim_url = config['GEOGRAPHY']['nominatim_url']
-        if (self.nominatim_url[-1] != "/"):
+        if self.nominatim_url[-1] != "/":
             self.nominatim_url += "/"
 
         self.twitter_handle = config['TWITTER']['twitter_handle']
@@ -174,7 +173,7 @@ class MercatorProjection:
         return PixPoint(x, y)
 
     def pixpoint_to_geopoint(self, pixpoint):
-        lon = self.__interpolate(pixpoint.x, 0, self.width, self.west, self.east);
+        lon = self.__interpolate(pixpoint.x, 0, self.width, self.west, self.east)
         lat = self.__raw_unproject_lat(self.__interpolate(
             pixpoint.y,
             0,
@@ -472,12 +471,12 @@ class ReverseGeocoder:
 
         try:
             self.attribution = json['licence']
-        except KeyError as e:
+        except KeyError:
             self.attribution = ""
 
         try:
             self.name = json['display_name']
-        except KeyError as e:
+        except KeyError:
             self.name = ""
             self.error = True
 
@@ -611,21 +610,21 @@ class VideoEditor:
         # measure dimensions of text (this is an upper bound due to whitespace
         # included above/below letters), see
         # https://pillow.readthedocs.io/en/stable/reference/ImageDraw.html#PIL.ImageDraw.ImageDraw.textsize
-        dummy = Image.new("RGB", (0,0), (255,255,255))
-        dd = ImageDraw.Draw(dummy)
-        s = dd.textsize(text, font=fnt)
+        dummy = Image.new("RGB", (0, 0), (255, 255, 255))
+        dummy_draw = ImageDraw.Draw(dummy)
+        size = dummy_draw.textsize(text, font=fnt)
 
         # draw on canvas of measured dimensions, must have transparent background
-        txt = Image.new("RGBA", s, (255,255,255,0))
-        d = ImageDraw.Draw(txt)
-        d.text((0,0), text, font=fnt, fill=(255,255,255,255))
+        txt = Image.new("RGBA", size, (255, 255, 255, 0))
+        txt_draw = ImageDraw.Draw(txt)
+        txt_draw.text((0, 0), text, font=fnt, fill=(255, 255, 255, 255))
 
         # crop to actual dimensions now that we can measure those (this
         # sometimes cuts off a bit too much, but there doesn't seem to be a way
         # of fixing that without rolling my own algorithm)
-        txt = txt.crop(txt.getbbox())
+        cropped_txt = txt.crop(txt.getbbox())
 
-        return ImageClip(np.array(txt))
+        return ImageClip(np.array(cropped_txt))
 
     def __draw_progress_pieslice(self, size, completion):
         """
@@ -637,13 +636,13 @@ class VideoEditor:
         # drawing at 3x scale and then scaling down later
         draw_size = 3 * size
 
-        pie = Image.new("RGBA", (draw_size,draw_size), (255,255,255,0))
-        d = ImageDraw.Draw(pie)
-        d.pieslice([0,0,draw_size-1,draw_size-1], 0, 360, fill=(255,255,255,128))
-        d.pieslice([0,0,draw_size-1,draw_size-1], -90, completion * 360 - 90, fill=(255,255,255,255))
+        pie = Image.new("RGBA", (draw_size,draw_size), (255, 255, 255, 0))
+        pie_draw = ImageDraw.Draw(pie)
+        pie_draw.pieslice([0, 0, draw_size-1, draw_size-1], 0, 360, fill=(255, 255, 255, 128))
+        pie_draw.pieslice([0, 0, draw_size-1, draw_size-1], -90, completion * 360 - 90, fill=(255, 255, 255, 255))
 
-        pie = pie.resize((size,size))
-        return ImageClip(np.array(pie))
+        pie_actual_size = pie.resize((size,size))
+        return ImageClip(np.array(pie_actual_size))
 
     def edit(self):
         """
@@ -653,12 +652,11 @@ class VideoEditor:
         lightly.
         """
 
-        tile = self.video.tile
         raw_video = VideoFileClip(self.video.path)
 
         resized_video = raw_video
         if self.resize is not None:
-            resized_video = raw_video.resize((1280,720))
+            resized_video = raw_video.resize(self.resize)
 
         width = resized_video.w
         height = resized_video.h
@@ -705,8 +703,8 @@ class VideoEditor:
         frames_list[-1] = final_frame.set_duration(1 / images_per_second + final_frame_persist)
         frames = concatenate_videoclips(frames_list)
 
-        # add end card
-        background = ColorClip((width, height), color=(62,62,62))
+        # add end card (color matches land color of map)
+        background = ColorClip((width, height), color=(62, 62, 62))
 
         # map via https://commons.wikimedia.org/wiki/File:World_location_map_mono.svg
         worldmap = ImageClip("assets/map.png")
@@ -714,9 +712,9 @@ class VideoEditor:
         worldmap = worldmap.resize((background.size[0], map_scale * worldmap.size[1]))
 
         pointer = ImageClip("assets/pointer.png").resize(map_scale)
-        pointer_x = worldmap.size[0]/2 * (1 + (self.geopoint.lon / 180)) - pointer.size[0]/2
-        pointer_y = worldmap.size[1]/2 * (1 - (self.geopoint.lat / 90)) - pointer.size[1]/2 # "-" since x increased from top while lat increases from bottom
-        pointer = pointer.set_position((pointer_x,pointer_y))
+        pointer_x = worldmap.size[0] / 2 * (1 + (self.geopoint.lon / 180)) - pointer.size[0] / 2
+        pointer_y = worldmap.size[1] / 2 * (1 - (self.geopoint.lat / 90)) - pointer.size[1] / 2 # "-" since x increased from top while lat increases from bottom
+        pointer = pointer.set_position((pointer_x, pointer_y))
         geopoint = self.__draw_text(self.geopoint.fancy(), int(1.33 * pointer.size[1]))
         geopoint_x = None
         geopoint_y = pointer_y + (pointer.size[1] - geopoint.size[1]) / 2
@@ -747,11 +745,13 @@ class VideoEditor:
         fontsize = int(height / 45)
         accumulated_height = -fontsize
         for n, text in enumerate(reversed(credit_lines)):
+
+            # increase font size of topmost line
             if n == len(credit_lines) - 1:
                 fontsize = int(height / 30)
 
             line = self.__draw_text(text, fontsize)
-            line_x = width/2 - line.size[0]/2
+            line_x = width / 2 - line.size[0] / 2
             line_y = height - line.size[1] - accumulated_height - fontsize - margin
             line = line.set_position((line_x, line_y))
 
@@ -874,6 +874,8 @@ class Tweeter:
         return self.api.UploadMediaChunked(path)
 
     def tweet(self, text, media, geopoint=None):
+        """Dispatches a tweet with a video attachment."""
+
         if geopoint:
             self.api.PostUpdate(
                 text,
@@ -891,7 +893,7 @@ def main():
     # (the latter option is handy if you want to run multiple instances of
     # this bot with different configurations)
     config_path = "config.ini"
-    if (len(sys.argv) == 2):
+    if len(sys.argv) == 2:
         config_path = sys.argv[1]
     config = ConfigObj(config_path, unrepr=True)
     c = Config(config)
