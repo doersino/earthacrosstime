@@ -72,7 +72,7 @@ That's basically it!
 If you want your bot to tweet at predefined intervals, use `cron`, [`runwhen`](http://code.dogmap.org/runwhen/) or a similar tool. To make `cron` work with `venv`, you'll need to use bash and execute the `activate` script before running the bot (in this example, it runs every eight hours at 50 past the hour):
 
 ```
-50 */8 * * * * /usr/bin/env bash -c 'cd /PATH/TO/earthacrosstime && source bin/activate && python3 earthacrosstime.py'
+50 */8 * * * /usr/bin/env bash -c 'cd /PATH/TO/earthacrosstime && source bin/activate && python3 earthacrosstime.py'
 ```
 
 *Pro tip:* If you want to host multiple instances of this bot, you don't need multiple copies of the code – multiple config files suffice: simply run `python3 earthacrosstime.py one-of-your-config-files.ini`.
