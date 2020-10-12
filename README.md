@@ -49,8 +49,6 @@ $ source bin/activate
 $ pip3 install -r requirements.txt
 ```
 
-TODO notes on moviepy?
-
 (To deactivate the virtual environment, run `deactivate`.)
 
 
