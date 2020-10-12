@@ -14,7 +14,7 @@ In a bit more detail, whenever the bot runs, it...
 
 Much of the code has been adapted from [ærialbot](https://github.com/doersino/aerialbot), a previous project of mine that basically does the same (and more!) for static maps, and [CMU's Time Machine Viewer](https://github.com/CMU-CREATE-Lab/timemachine-viewer), which contains reference implementations of the required coordinate projections.
 
-#### Check it out at [@earthacrosstime](https://twitter.com/earthacrosstime)!
+#### 🐦 Check it out at [@earthacrosstime](https://twitter.com/earthacrosstime)!
 
 Here's one of the videos [tweeted](https://twitter.com/earthacrosstime/status/1315639879380893696) by this bot, showing the construction of [Incheon Airport](https://en.wikipedia.org/wiki/Incheon_International_Airport) and various developments on land.
 
