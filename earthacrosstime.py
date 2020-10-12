@@ -691,6 +691,12 @@ class VideoEditor:
 
             # composite with overlays defined outside this loop
             frame = CompositeVideoClip([frame, pieslice, year, geopoint, area, attribution])
+
+            # significantly (by a factor of 5!) reduce ram consumption by
+            # hackily rendering the current frame into an image ahead of the
+            # actual rendering step (CompositeVideoClip seems to just devour
+            # memory for some reason)
+            frame = ImageClip(list(frame.set_duration(1).iter_frames(fps=1))[0])
             frames.append(frame)
 
         # concatenate
