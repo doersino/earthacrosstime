@@ -3,6 +3,8 @@ import os
 import random
 import sys
 
+import argparse
+
 from configobj import ConfigObj
 
 import logging
@@ -889,14 +891,24 @@ class Tweeter:
 
 def main():
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('config_path', metavar='CONFIG_PATH', type=str, nargs='?', default="config.ini", help='config file to use instead of looking for config.ini in the current working directory')
+    parser.add_argument('-p', '--point', dest='point', metavar='LAT,LON', type=str, help='a point, e.g. \'37.453896,126.446829\', that will override your configuration')
+    parser.add_argument('-m', '--max-meters-per-pixel', dest='max_meters_per_pixel', metavar='N', type=float, help='a maximum meters per pixel constraint that will override your configuration')
+    args = parser.parse_args()
+
     # load configuration either from config.ini or from a user-supplied file
     # (the latter option is handy if you want to run multiple instances of
     # this bot with different configurations)
-    config_path = "config.ini"
-    if len(sys.argv) == 2:
-        config_path = sys.argv[1]
-    config = ConfigObj(config_path, unrepr=True)
+    config = ConfigObj(args.config_path, unrepr=True)
     c = Config(config)
+
+    # override configured point and/or meters per pixel constraint if supplied
+    # via the cli
+    if args.point:
+        c.point = tuple(map(float, args.point.split(",")))
+    if args.max_meters_per_pixel:
+        c.max_meters_per_pixel = args.max_meters_per_pixel
 
     logger = Log(c.logfile, c.verbosity)
 
