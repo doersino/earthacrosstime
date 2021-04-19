@@ -8,7 +8,8 @@ In a bit more detail, whenever the bot runs, it...
 * generates a **random point** within the bounds of this shape,
 * figures out **which video tile needs to be downloaded** to the point and an area around it,
 * **downloads that video** from the repository underlying [Google Earth Timelapse](https://earthengine.google.com/timelapse/),
-* **edits** the video, annotating it with **latitude & longitude, area covered, and a pin on a world map**,
+* **reverse geocodes** the chosen point using [Nominatim](https://nominatim.openstreetmap.org/ui/reverse.html) to figure out the location's name,
+* **edits** the video, annotating it with **latitude & longitude, area covered, and a named pin on a world map**,
 * **saves** that to disk,
 * and **tweets** the edited video, optionally with a geotag.
 
