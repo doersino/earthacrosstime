@@ -2,6 +2,7 @@ import math
 import os
 import random
 import sys
+import time
 
 import argparse
 
@@ -351,7 +352,6 @@ class GeoShape:
 
         return geopoint
 
-# rel to width, height
 class PixPoint:
     """
     A point relative to the "width" and "height" attributes of r.json, i.e. the
@@ -433,7 +433,11 @@ class RawVideo:
             f.write(video_data)
 
     def download(self):
-        r = requests.get(self.url)
+        try:
+            r = requests.get(self.url)
+        except requests.exceptions.RequestException:  # retry once on errors
+            time.sleep(10)
+            r = requests.get(self.url)
         if r.status_code != 200:
             raise ValueError(f"unable to download tile from {self.url}, status code {r.status_code}")
         self.__write_to_temp(r.content)
