@@ -19,9 +19,7 @@ Much of the code has been adapted from [ærialbot](https://github.com/doersino/a
 
 Here's one of the videos [tweeted](https://twitter.com/earthacrosstime/status/1315639879380893696) by this bot, showing the construction of [Incheon Airport](https://en.wikipedia.org/wiki/Incheon_International_Airport) and various developments on land.
 
-![](assets/example.gif)
-
-*(It's been converted to a low-quality-despite-fervent-optimization-yet-still-somehow-6-megabyte-which-is-double-the-size-of-the-original-video-even-though-that-one-has-twice-as-much-detail GIF because it's 2020 and GitHub still doesn't support including short videos in Markdown files. Rant over.)*
+https://user-images.githubusercontent.com/1944410/120917015-35d93000-c6ad-11eb-9ab8-6d1d3b7a5525.mp4
 
 
 ## Features
