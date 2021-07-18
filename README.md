@@ -77,7 +77,7 @@ If you want your bot to tweet at predefined intervals, use `cron`, [`runwhen`](h
 
 *Pro tip:* If you want to host multiple instances of this bot, you don't need multiple copies of the code – multiple config files suffice: simply run `python3 earthacrosstime.py one-of-your-config-files.ini`.
 
-*Uber pro tip:* Run `python3 earthacrosstime.py -h` to learn about some secret CLI options!
+*Uber pro tip:* Run `python3 earthacrosstime.py --help` to learn about some secret CLI options!
 
 
 ## License
