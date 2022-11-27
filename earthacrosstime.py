@@ -755,9 +755,13 @@ class VideoEditor:
         if self.mastodon_handle:
             credit_handles += self.mastodon_handle
 
+        credit_url = ""
+        if self.twitter_handle:
+            credit_url = "https://twitter.com/" + self.twitter_handle + ", "
+
         credit_lines = [
             credit_handles,
-            "https://twitter.com/" + self.twitter_handle + ", bot source code: https://github.com/doersino/earthacrosstime, typeface: optician sans",
+            credit_url + "bot source code: https://github.com/doersino/earthacrosstime, typeface: optician sans",
             "video url: " + self.video.url
         ]
         if not self.reverse_geocode.error:
