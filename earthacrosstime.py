@@ -22,6 +22,7 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
 import twitter
+from mastodon import Mastodon
 
 class Config:
     """
@@ -51,12 +52,17 @@ class Config:
             self.nominatim_url += "/"
 
         self.twitter_handle = config['TWITTER']['twitter_handle']
-        self.consumer_key = config['TWITTER']['consumer_key']
-        self.consumer_secret = config['TWITTER']['consumer_secret']
-        self.access_token = config['TWITTER']['access_token']
-        self.access_token_secret = config['TWITTER']['access_token_secret']
+        self.t_consumer_key = config['TWITTER']['consumer_key']
+        self.t_consumer_secret = config['TWITTER']['consumer_secret']
+        self.t_access_token = config['TWITTER']['access_token']
+        self.t_access_token_secret = config['TWITTER']['access_token_secret']
         self.tweet_text = config['TWITTER']['tweet_text']
         self.include_location_in_metadata = config['TWITTER']['include_location_in_metadata']
+
+        self.mastodon_handle = config['MASTODON']['mastodon_handle']
+        self.m_api_base_url = config['MASTODON']['api_base_url']
+        self.m_access_token = config['MASTODON']['access_token']
+        self.toot_text = config['MASTODON']['toot_text']
 
 class Metadata:
     """The same but for metadata derived from tm.json and r.json."""
@@ -489,7 +495,7 @@ class ReverseGeocoder:
 class VideoEditor:
     """This is where the magic happens!"""
 
-    def __init__(self, video, resize, geopoint, area_size, capture_times, attribution, reverse_geocode, twitter_handle):
+    def __init__(self, video, resize, geopoint, area_size, capture_times, attribution, reverse_geocode, twitter_handle, mastodon_handle):
         """
         Ideally, this class would require fewer constructor parameters – which
         would be trivial if config and metadata were available globally. I tried
@@ -504,6 +510,7 @@ class VideoEditor:
         self.attribution = attribution
         self.reverse_geocode = reverse_geocode
         self.twitter_handle = twitter_handle
+        self.mastodon_handle = mastodon_handle
 
         self.path = os.path.join(video.temp_dir, f"{video.tile.level.index}-{video.tile.row}-{video.tile.col}-processed.mp4")
 
@@ -740,8 +747,16 @@ class VideoEditor:
                 geolocation_x = pointer_x - geolocation.size[0] - 0.5 * pointer.size[0]
             geolocation = geolocation.set_position((geolocation_x, geolocation_y))
 
+        credit_handles = ""
+        if self.twitter_handle:
+            credit_handles += "@" + self.twitter_handle
+        if self.twitter_handle and self.mastodon_handle:
+            credit_handles += " — "
+        if self.mastodon_handle:
+            credit_handles += self.mastodon_handle
+
         credit_lines = [
-            "@" + self.twitter_handle,
+            credit_handles,
             "https://twitter.com/" + self.twitter_handle + ", bot source code: https://github.com/doersino/earthacrosstime, typeface: optician sans",
             "video url: " + self.video.url
         ]
@@ -893,6 +908,28 @@ class Tweeter:
         else:
             self.api.PostUpdate(text, media=media.media_id)
 
+class Tooter:
+    """
+    Basic class for tooting videos, a simple wrapper around the relevant
+    functions of the Mastodon.py package.
+    """
+
+    def __init__(self, api_base_url, access_token):
+        self.api = Mastodon(
+            access_token = access_token,
+            api_base_url = api_base_url
+        )
+
+    def upload(self, path):
+        """Uploads an image to Mastodon."""
+
+        return self.api.media_post(path, synchronous=True)
+
+    def toot(self, text, media):
+        """Dispatches a toot with a video attachment."""
+
+        self.api.status_post(text, media_ids=[media.id])
+
 def main():
 
     parser = argparse.ArgumentParser()
@@ -983,24 +1020,24 @@ def main():
         logger.debug(area_size)
 
         logger.info("Editing video...")
-        editor = VideoEditor(video, c.resize, geopoint, area_size, metadata.capture_times, c.attribution, reverse_geocode, c.twitter_handle)
+        editor = VideoEditor(video, c.resize, geopoint, area_size, metadata.capture_times, c.attribution, reverse_geocode, c.twitter_handle, c.mastodon_handle)
         editor.edit()
 
         logger.info("Rendering video (this may take a minute or so)...")
         editor.render()
         logger.debug(editor.path)
 
-        tweeting = all(x is not None for x in [c.consumer_key, c.consumer_secret, c.access_token, c.access_token_secret])
+        # time machine levels aren't quite the same as the zoom levels used
+        # by these mapping services, but they're close enough the be useful
+        osm_url = f"https://www.openstreetmap.org/#map={level.index}/{geopoint.lat}/{geopoint.lon}"
+        googlemaps_url = f"https://www.google.com/maps/@{geopoint.lat},{geopoint.lon},{level.index}z"
+
+        year_range = f"{metadata.capture_times[0]} – {metadata.capture_times[-1]}"
+
+        tweeting = all(x is not None for x in [c.t_consumer_key, c.t_consumer_secret, c.t_access_token, c.t_access_token_secret])
         if tweeting:
             logger.info("Connecting to Twitter...")
-            tweeter = Tweeter(c.consumer_key, c.consumer_secret, c.access_token, c.access_token_secret)
-
-            # time machine levels aren't quite the same as the zoom levels used
-            # by these mapping services, but they're close enough the be useful
-            osm_url = f"https://www.openstreetmap.org/#map={level.index}/{geopoint.lat}/{geopoint.lon}"
-            googlemaps_url = f"https://www.google.com/maps/@{geopoint.lat},{geopoint.lon},{level.index}z"
-
-            year_range = f"{metadata.capture_times[0]} – {metadata.capture_times[-1]}"
+            tweeter = Tweeter(c.t_consumer_key, c.t_consumer_secret, c.t_access_token, c.t_access_token_secret)
 
             logger.info("Uploading video to Twitter...")
             media = tweeter.upload(editor.path)
@@ -1021,6 +1058,29 @@ def main():
                 tweeter.tweet(tweet_text, media, geopoint)
             else:
                 tweeter.tweet(tweet_text, media)
+
+        tooting = all(x is not None for x in [c.m_api_base_url, c.m_access_token])
+        if tooting:
+            logger.info("Connecting to Mastodon...")
+            tooter = Tooter(c.m_api_base_url, c.m_access_token)
+
+            logger.info("Uploading video to Mastodon...")
+            media = tooter.upload(editor.path)
+            logger.debug(media)
+
+            logger.info("Sending toot...")
+            toot_text = c.toot_text.format(
+                latitude=geopoint.lat,
+                longitude=geopoint.lon,
+                point_fancy=geopoint.fancy(),
+                area_size=area_size,
+                osm_url=osm_url,
+                googlemaps_url=googlemaps_url,
+                location=reverse_geocode.name,
+                year_range=year_range
+            )
+            logger.debug(toot_text)
+            tooter.toot(toot_text, media)
 
         logger.info("All done!")
 
