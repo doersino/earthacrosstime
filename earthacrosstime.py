@@ -1034,6 +1034,8 @@ def main():
 
         year_range = f"{metadata.capture_times[0]} – {metadata.capture_times[-1]}"
 
+        location_globe_emoji = "🌎" if geopoint.lon < -30 else "🌍" if geopoint.lon < 60 else "🌏"
+
         tweeting = all(x is not None for x in [c.t_consumer_key, c.t_consumer_secret, c.t_access_token, c.t_access_token_secret])
         if tweeting:
             logger.info("Connecting to Twitter...")
@@ -1051,6 +1053,7 @@ def main():
                 osm_url=osm_url,
                 googlemaps_url=googlemaps_url,
                 location=reverse_geocode.name,
+                location_globe_emoji=location_globe_emoji,
                 year_range=year_range
             )
             logger.debug(tweet_text)
@@ -1077,6 +1080,7 @@ def main():
                 osm_url=osm_url,
                 googlemaps_url=googlemaps_url,
                 location=reverse_geocode.name,
+                location_globe_emoji=location_globe_emoji,
                 year_range=year_range
             )
             logger.debug(toot_text)
