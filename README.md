@@ -1,6 +1,6 @@
 # earthacrosstime
 
-*Twitter bot that posts videos showcasing how random locations in the world have changed since 1984.*
+*Mastodon/Twitter bot that posts videos showcasing how random locations in the world have changed since 1984.*
 
 In a bit more detail, whenever the bot runs, it...
 
@@ -11,13 +11,13 @@ In a bit more detail, whenever the bot runs, it...
 * **reverse geocodes** the chosen point using [Nominatim](https://nominatim.openstreetmap.org/ui/reverse.html) to figure out the location's name,
 * **edits** the video, annotating it with **latitude & longitude, area covered, and a named pin on a world map**,
 * **saves** that to disk,
-* and **tweets** the edited video, optionally with a geotag.
+* and **tweets and/or toots** the edited video, optionally with a geotag.
 
 Much of the code has been adapted from [ærialbot](https://github.com/doersino/aerialbot), a previous project of mine that basically does the same (and more!) for static maps, and [CMU's Time Machine Viewer](https://github.com/CMU-CREATE-Lab/timemachine-viewer), which contains reference implementations of the required coordinate projections.
 
-#### 🐦 Check it out at [@earthacrosstime](https://twitter.com/earthacrosstime)!
+#### 🐦 Check it out at [@earthacrosstime](https://twitter.com/earthacrosstime) or, newly, [@aerialbot@botsin.space](https://botsin.space/@aerialbot)!
 
-Here's one of the videos [tweeted](https://twitter.com/earthacrosstime/status/1315639879380893696) by this bot, showing the construction of [Incheon Airport](https://en.wikipedia.org/wiki/Incheon_International_Airport) and various developments on land.
+Here's one of the videos [posted](https://twitter.com/earthacrosstime/status/1315639879380893696) by this bot, showing the construction of [Incheon Airport](https://en.wikipedia.org/wiki/Incheon_International_Airport) and various developments on land.
 
 https://user-images.githubusercontent.com/1944410/120917015-35d93000-c6ad-11eb-9ab8-6d1d3b7a5525.mp4
 
@@ -71,7 +71,7 @@ $ python3 earthacrosstime.py
 
 That's basically it!
 
-If you want your bot to tweet at predefined intervals, use `cron`, [`runwhen`](http://code.dogmap.org/runwhen/) or a similar tool. To make `cron` work with `venv`, you'll need to use bash and execute the `activate` script before running the bot (in this example, it runs every eight hours at 50 past the hour):
+If you want your bot to post at predefined intervals, use `cron`, [`runwhen`](http://code.dogmap.org/runwhen/) or a similar tool. To make `cron` work with `venv`, you'll need to use bash and execute the `activate` script before running the bot (in this example, it runs every eight hours at 50 past the hour):
 
 ```
 50 */8 * * * /usr/bin/env bash -c 'cd /PATH/TO/earthacrosstime && source bin/activate && python3 earthacrosstime.py'

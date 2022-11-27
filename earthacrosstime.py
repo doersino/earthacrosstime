@@ -921,7 +921,7 @@ class Tooter:
         )
 
     def upload(self, path):
-        """Uploads an image to Mastodon."""
+        """Uploads a video to Mastodon."""
 
         return self.api.media_post(path, synchronous=True)
 
