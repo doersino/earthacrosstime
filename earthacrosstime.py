@@ -1036,9 +1036,9 @@ def main():
         osm_url = f"https://www.openstreetmap.org/#map={level.index}/{geopoint.lat}/{geopoint.lon}"
         googlemaps_url = f"https://www.google.com/maps/@{geopoint.lat},{geopoint.lon},{level.index}z"
 
-        year_range = f"{metadata.capture_times[0]} – {metadata.capture_times[-1]}"
-
         location_globe_emoji = "🌎" if geopoint.lon < -30 else "🌍" if geopoint.lon < 60 else "🌏"
+        area_size_pretty = f"{area_w} × {area_h} km"
+        year_range = f"{metadata.capture_times[0]} – {metadata.capture_times[-1]}"
 
         tweeting = all(x is not None for x in [c.t_consumer_key, c.t_consumer_secret, c.t_access_token, c.t_access_token_secret])
         if tweeting:
@@ -1053,7 +1053,7 @@ def main():
                 latitude=geopoint.lat,
                 longitude=geopoint.lon,
                 point_fancy=geopoint.fancy(),
-                area_size=area_size,
+                area_size=area_size_pretty,
                 osm_url=osm_url,
                 googlemaps_url=googlemaps_url,
                 location=reverse_geocode.name,
@@ -1080,7 +1080,7 @@ def main():
                 latitude=geopoint.lat,
                 longitude=geopoint.lon,
                 point_fancy=geopoint.fancy(),
-                area_size=area_size,
+                area_size=area_size_pretty,
                 osm_url=osm_url,
                 googlemaps_url=googlemaps_url,
                 location=reverse_geocode.name,
