@@ -478,8 +478,14 @@ class ReverseGeocoder:
         # note that the following two lines can throw exceptions – they aren't
         # caught since I rather be aware that something's wrong via the emails
         # the cron daemon sends me on errors
-        raw = requests.get(url)
-        json = raw.json()
+        # update in 2024 (when nominatim started throwing errors about 20% of
+        # the time for some reason): now catching exceptions, heh!
+        try:
+            raw = requests.get(url)
+            json = raw.json()
+        except Exception:
+            self.name = ""
+            self.error = True
 
         try:
             self.attribution = json['licence']
@@ -1042,7 +1048,9 @@ def main():
         logger.info("Looking up the name of wherever the point is located...")
         reverse_geocode = ReverseGeocoder(c.nominatim_url, geopoint, level)
         reverse_geocode.fetch()
-        if not reverse_geocode.error:
+        if reverse_geocode.error:
+            logger.warning("Reverse geocoding failed!")
+        else:
             logger.debug(reverse_geocode.name)
 
         logger.info("Determining how large the area covered is...")
