@@ -486,6 +486,7 @@ class ReverseGeocoder:
         except Exception:
             self.name = ""
             self.error = True
+            return
 
         try:
             self.attribution = json['licence']
