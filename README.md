@@ -15,9 +15,9 @@ In a bit more detail, whenever the bot runs, it...
 
 Much of the code has been adapted from [ærialbot](https://github.com/doersino/aerialbot), a previous project of mine that basically does the same (and more!) for static maps, and [CMU's Time Machine Viewer](https://github.com/CMU-CREATE-Lab/timemachine-viewer), which contains reference implementations of the required coordinate projections.
 
-#### 🐦 Check it out at [@earthacrosstime](https://twitter.com/earthacrosstime) or, newly, [@aerialbot@botsin.space](https://botsin.space/@aerialbot)!
+#### 🐦 Check it out at [@aerialbot@botsin.space](https://botsin.space/@aerialbot), where every sixth post is made by this bot!
 
-Here's one of the videos [posted](https://twitter.com/earthacrosstime/status/1315639879380893696) by this bot, showing the construction of [Incheon Airport](https://en.wikipedia.org/wiki/Incheon_International_Airport) and various developments on land.
+Here's one of the videos posted by this bot, showing the construction of [Incheon Airport](https://en.wikipedia.org/wiki/Incheon_International_Airport) and various developments on land.
 
 https://user-images.githubusercontent.com/1944410/120917015-35d93000-c6ad-11eb-9ab8-6d1d3b7a5525.mp4
 
