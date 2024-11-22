@@ -797,9 +797,15 @@ class VideoEditor:
         endcard_fade = CompositeVideoClip([final_frame.set_duration(endcard_crossfade).fadeout(endcard_crossfade), endcard.set_duration(endcard_crossfade).crossfadein(endcard_crossfade)])
         endcard = endcard.set_duration(endcard_persist)
 
-        # finish
+        # finish video
         clip = concatenate_videoclips([frames, endcard_fade, endcard])
         clip = clip.set_fps(result_framerate)
+
+        # add silent audio to make mastodon recognize it as a video instead of a
+        # gif, thus enabling video controls
+        audioclip = AudioClip(lambda t: 0, duration=clip.duration, fps=44100)
+        clip.audio = audioclip
+
         self.clip = clip
 
     def render(self):
