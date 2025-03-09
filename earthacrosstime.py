@@ -464,7 +464,7 @@ class ReverseGeocoder:
         self.name = None
 
     def fetch(self):
-        url = f"{self.nominatim_url}reverse.php?lat={self.geopoint.lat}&lon={self.geopoint.lon}&zoom={self.level.index}&accept-language=en&format=jsonv2"
+        url = f"{self.nominatim_url}reverse?lat={self.geopoint.lat}&lon={self.geopoint.lon}&zoom={self.level.index}&accept-language=en&format=jsonv2"
 
         # note that the following two lines can throw exceptions – they aren't
         # caught since I rather be aware that something's wrong via the emails
@@ -472,9 +472,10 @@ class ReverseGeocoder:
         # update in 2024 (when nominatim started throwing errors about 20% of
         # the time for some reason): now catching exceptions, heh!
         try:
-            raw = requests.get(url)
+            raw = requests.get(url, headers={'User-Agend': 'Mozilla/5.0 (compatible; earthacrosstime/1.0)'})
+            #print(raw.content)
             json = raw.json()
-        except Exception:
+        except Exception as e:
             self.name = ""
             self.error = True
             return
