@@ -17,11 +17,10 @@ import shapely.geometry
 
 import requests
 
-from moviepy.editor import *
+from moviepy import *
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
-import twitter
 from mastodon import Mastodon, MastodonError
 
 class Config:
@@ -50,14 +49,6 @@ class Config:
         self.nominatim_url = config['GEOGRAPHY']['nominatim_url']
         if self.nominatim_url[-1] != "/":
             self.nominatim_url += "/"
-
-        self.twitter_handle = config['TWITTER']['twitter_handle']
-        self.t_consumer_key = config['TWITTER']['consumer_key']
-        self.t_consumer_secret = config['TWITTER']['consumer_secret']
-        self.t_access_token = config['TWITTER']['access_token']
-        self.t_access_token_secret = config['TWITTER']['access_token_secret']
-        self.tweet_text = config['TWITTER']['tweet_text']
-        self.include_location_in_metadata = config['TWITTER']['include_location_in_metadata']
 
         self.mastodon_handle = config['MASTODON']['mastodon_handle']
         self.m_api_base_url = config['MASTODON']['api_base_url']
@@ -502,7 +493,7 @@ class ReverseGeocoder:
 class VideoEditor:
     """This is where the magic happens!"""
 
-    def __init__(self, video, resize, geopoint, area_size, capture_times, attribution, reverse_geocode, twitter_handle, mastodon_handle):
+    def __init__(self, video, resize, geopoint, area_size, capture_times, attribution, reverse_geocode, mastodon_handle):
         """
         Ideally, this class would require fewer constructor parameters – which
         would be trivial if config and metadata were available globally. I tried
@@ -516,7 +507,6 @@ class VideoEditor:
         self.capture_times = capture_times
         self.attribution = attribution
         self.reverse_geocode = reverse_geocode
-        self.twitter_handle = twitter_handle
         self.mastodon_handle = mastodon_handle
 
         self.path = os.path.join(video.temp_dir, f"{video.tile.level.index}-{video.tile.row}-{video.tile.col}-processed.mp4")
@@ -630,12 +620,14 @@ class VideoEditor:
         # measure dimensions of text (this is an upper bound due to whitespace
         # included above/below letters), see
         # https://pillow.readthedocs.io/en/stable/reference/ImageDraw.html#PIL.ImageDraw.ImageDraw.textsize
+        # note: .textsize() was deprecated, now https://pillow.readthedocs.io/en/stable/reference/ImageDraw.html#PIL.ImageDraw.ImageDraw.textlength exists, height is linecount times font size
         dummy = Image.new("RGB", (0, 0), (255, 255, 255))
         dummy_draw = ImageDraw.Draw(dummy)
-        size = dummy_draw.textsize(text, font=fnt)
+        length = math.ceil(dummy_draw.textlength(text, font=fnt))
+        height = fontsize
 
         # draw on canvas of measured dimensions, must have transparent background
-        txt = Image.new("RGBA", size, (255, 255, 255, 0))
+        txt = Image.new("RGBA", (length, height), (255, 255, 255, 0))
         txt_draw = ImageDraw.Draw(txt)
         txt_draw.text((0, 0), text, font=fnt, fill=(255, 255, 255, 255))
 
@@ -676,7 +668,7 @@ class VideoEditor:
 
         resized_video = raw_video
         if self.resize is not None:
-            resized_video = raw_video.resize(self.resize)
+            resized_video = raw_video.resized(self.resize)
 
         width = resized_video.w
         height = resized_video.h
@@ -690,11 +682,11 @@ class VideoEditor:
 
         # define overlays that will be constant across all frames
         geopoint = self.__draw_text(self.geopoint.fancy(), int(height / 15))
-        geopoint = geopoint.set_position((margin, margin))
+        geopoint = geopoint.with_position((margin, margin))
         area = self.__draw_text(self.area_size, int(height / 22))
-        area = area.set_position((margin, margin + geopoint.size[1] + int(0.67 * area.size[1])))
+        area = area.with_position((margin, margin + geopoint.size[1] + int(0.67 * area.size[1])))
         attribution = self.__draw_text(self.attribution, int(height / 40))
-        attribution = attribution.set_position((width - attribution.size[0] - margin, height - attribution.size[1] - margin))
+        attribution = attribution.with_position((width - attribution.size[0] - margin, height - attribution.size[1] - margin))
 
         # process each frame separately
         frames = []
@@ -703,9 +695,9 @@ class VideoEditor:
 
             pieslice_height = int(height / 13.5)  # manually dialled in to match font appearance
             pieslice = self.__draw_progress_pieslice(pieslice_height, n / (len(self.capture_times) - 1))
-            pieslice = pieslice.set_position((width - pieslice.size[0] - margin, margin))
+            pieslice = pieslice.with_position((width - pieslice.size[0] - margin, margin))
             year = self.__draw_text(self.capture_times[n], int(height / 7))
-            year = year.set_position((width - year.size[0] - pieslice.size[0] - margin - margin, margin))
+            year = year.with_position((width - year.size[0] - pieslice.size[0] - margin - margin, margin))
 
             # composite with overlays defined outside this loop
             frame = CompositeVideoClip([frame, pieslice, year, geopoint, area, attribution])
@@ -714,13 +706,13 @@ class VideoEditor:
             # hackily rendering the current frame into an image ahead of the
             # actual rendering step (CompositeVideoClip seems to just devour
             # memory for some reason)
-            frame = ImageClip(list(frame.set_duration(1).iter_frames(fps=1))[0])
+            frame = ImageClip(list(frame.with_duration(1).iter_frames(fps=1))[0])
             frames.append(frame)
 
         # concatenate
-        frames_list = [frame.set_duration(1 / images_per_second) for frame in frames]
+        frames_list = [frame.with_duration(1 / images_per_second) for frame in frames]
         final_frame = frames_list[-1]
-        frames_list[-1] = final_frame.set_duration(1 / images_per_second + final_frame_persist)
+        frames_list[-1] = final_frame.with_duration(1 / images_per_second + final_frame_persist)
         frames = concatenate_videoclips(frames_list)
 
         # add end card (color matches land color of map)
@@ -729,12 +721,12 @@ class VideoEditor:
         # map via https://commons.wikimedia.org/wiki/File:World_location_map_mono.svg
         worldmap = ImageClip("assets/map.png")
         map_scale = background.size[0] / worldmap.size[0]
-        worldmap = worldmap.resize((background.size[0], map_scale * worldmap.size[1]))
+        worldmap = worldmap.resized((background.size[0], map_scale * worldmap.size[1]))
 
-        pointer = ImageClip("assets/pointer.png").resize(map_scale)
+        pointer = ImageClip("assets/pointer.png").resized(map_scale)
         pointer_x = worldmap.size[0] / 2 * (1 + (self.geopoint.lon / 180)) - pointer.size[0] / 2
         pointer_y = worldmap.size[1] / 2 * (1 - (self.geopoint.lat / 90)) - pointer.size[1] / 2 # "-" since x increased from top while lat increases from bottom
-        pointer = pointer.set_position((pointer_x, pointer_y))
+        pointer = pointer.with_position((pointer_x, pointer_y))
         geopoint = self.__draw_text(self.geopoint.fancy(), int(1.33 * pointer.size[1]))
         geopoint_x = None
         geopoint_y = pointer_y + (pointer.size[1] - geopoint.size[1]) / 2
@@ -742,7 +734,7 @@ class VideoEditor:
             geopoint_x = pointer_x + 1.5 * pointer.size[0]
         else:
             geopoint_x = pointer_x - geopoint.size[0] - 0.5 * pointer.size[0]
-        geopoint = geopoint.set_position((geopoint_x, geopoint_y))
+        geopoint = geopoint.with_position((geopoint_x, geopoint_y))
         geolocation = None
         if not self.reverse_geocode.error:
             geolocation = self.__draw_text(self.reverse_geocode.name, int(1.1 * pointer.size[1]))
@@ -752,23 +744,15 @@ class VideoEditor:
                 geolocation_x = pointer_x + 1.5 * pointer.size[0]
             else:
                 geolocation_x = pointer_x - geolocation.size[0] - 0.5 * pointer.size[0]
-            geolocation = geolocation.set_position((geolocation_x, geolocation_y))
+            geolocation = geolocation.with_position((geolocation_x, geolocation_y))
 
         credit_handles = ""
-        if self.twitter_handle:
-            credit_handles += "@" + self.twitter_handle
-        if self.twitter_handle and self.mastodon_handle:
-            credit_handles += " — "
         if self.mastodon_handle:
             credit_handles += self.mastodon_handle
 
-        credit_url = ""
-        if self.twitter_handle:
-            credit_url = "https://twitter.com/" + self.twitter_handle + ", "
-
         credit_lines = [
             credit_handles,
-            credit_url + "bot source code: https://github.com/doersino/earthacrosstime, typeface: optician sans",
+            "bot source code: https://github.com/doersino/earthacrosstime, typeface: optician sans",
             "video url: " + self.video.url
         ]
         if not self.reverse_geocode.error:
@@ -785,7 +769,7 @@ class VideoEditor:
             line = self.__draw_text(text, fontsize)
             line_x = width / 2 - line.size[0] / 2
             line_y = height - line.size[1] - accumulated_height - fontsize - margin
-            line = line.set_position((line_x, line_y))
+            line = line.with_position((line_x, line_y))
 
             accumulated_height += fontsize
             credit.append(line)
@@ -794,12 +778,15 @@ class VideoEditor:
         if not self.reverse_geocode.error:
             endcard_components.append(geolocation)
         endcard = CompositeVideoClip(endcard_components + credit)
-        endcard_fade = CompositeVideoClip([final_frame.set_duration(endcard_crossfade).fadeout(endcard_crossfade), endcard.set_duration(endcard_crossfade).crossfadein(endcard_crossfade)])
-        endcard = endcard.set_duration(endcard_persist)
+        endcard_fade = CompositeVideoClip([
+            vfx.FadeOut(endcard_crossfade).apply(final_frame.with_duration(endcard_crossfade)),
+            vfx.CrossFadeIn(endcard_crossfade).apply(endcard.with_duration(endcard_crossfade))
+        ])
+        endcard = endcard.with_duration(endcard_persist)
 
         # finish video
         clip = concatenate_videoclips([frames, endcard_fade, endcard])
-        clip = clip.set_fps(result_framerate)
+        clip = clip.with_fps(result_framerate)
 
         # add silent audio to make mastodon recognize it as a video instead of a
         # gif, thus enabling video controls
@@ -890,40 +877,6 @@ class Log:
         for line in traceback_lines:
             self.critical(line)
         sys.exit(1)
-
-class Tweeter:
-    """
-    Basic class for tweeting videos, a simple wrapper around the relevant
-    methods provided by the python-twitter library.
-    """
-
-    def __init__(self, consumer_key, consumer_secret, access_token, access_token_secret):
-        self.api = twitter.Api(
-            consumer_key=consumer_key,
-            consumer_secret=consumer_secret,
-            access_token_key=access_token,
-            access_token_secret=access_token_secret,
-            input_encoding="utf-8"
-            )
-
-    def upload(self, path):
-        """Uploads a video to Twitter."""
-
-        return self.api.UploadMediaChunked(path)
-
-    def tweet(self, text, media, geopoint=None):
-        """Dispatches a tweet with a video attachment."""
-
-        if geopoint:
-            self.api.PostUpdate(
-                text,
-                media=media,
-                latitude=geopoint.lat,
-                longitude=geopoint.lon,
-                display_coordinates=True
-            )
-        else:
-            self.api.PostUpdate(text, media=media.media_id)
 
 class Tooter:
     """
@@ -1067,7 +1020,7 @@ def main():
         logger.debug(area_size)
 
         logger.info("Editing video...")
-        editor = VideoEditor(video, c.resize, geopoint, area_size, metadata.capture_times, c.attribution, reverse_geocode, c.twitter_handle, c.mastodon_handle)
+        editor = VideoEditor(video, c.resize, geopoint, area_size, metadata.capture_times, c.attribution, reverse_geocode, c.mastodon_handle)
         editor.edit()
 
         logger.info("Rendering video (this may take a minute or so)...")
@@ -1082,32 +1035,6 @@ def main():
         location_globe_emoji = "🌎" if geopoint.lon < -30 else "🌍" if geopoint.lon < 60 else "🌏"
         area_size_pretty = f"{area_w} × {area_h} km"
         year_range = f"{metadata.capture_times[0]} – {metadata.capture_times[-1]}"
-
-        tweeting = all(x is not None for x in [c.t_consumer_key, c.t_consumer_secret, c.t_access_token, c.t_access_token_secret])
-        if tweeting:
-            logger.info("Connecting to Twitter...")
-            tweeter = Tweeter(c.t_consumer_key, c.t_consumer_secret, c.t_access_token, c.t_access_token_secret)
-
-            logger.info("Uploading video to Twitter...")
-            media = tweeter.upload(editor.path)
-
-            logger.info("Sending tweet...")
-            tweet_text = c.tweet_text.format(
-                latitude=geopoint.lat,
-                longitude=geopoint.lon,
-                point_fancy=geopoint.fancy(),
-                area_size=area_size_pretty,
-                osm_url=osm_url,
-                googlemaps_url=googlemaps_url,
-                location=reverse_geocode.name,
-                location_globe_emoji=location_globe_emoji,
-                year_range=year_range
-            )
-            logger.debug(tweet_text)
-            if c.include_location_in_metadata:
-                tweeter.tweet(tweet_text, media, geopoint)
-            else:
-                tweeter.tweet(tweet_text, media)
 
         tooting = all(x is not None for x in [c.m_api_base_url, c.m_access_token])
         if tooting:
